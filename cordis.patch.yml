@@ -1,0 +1,10 @@
+# coding-sound profile bundle: mounts the plugin as a web row next to the
+# shipped Harness UI. The Host half serves the bundled WAV assets over the web
+# server; the browser half owns the audio engine and the Settings section.
+#
+# The row carries no `config:` on purpose: this plugin keeps its preferences in
+# the browser that plays the sound (`localStorage`), which is what makes two
+# browsers on the same profile hold independent sound settings.
+- insert:
+    - id: coding-sound
+      name: 'dsh-coding-sound'

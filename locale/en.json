@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Coding Sound",
+    "description": "Generative background music while the model streams, plus separate completion and attention chimes."
+  }
+}
