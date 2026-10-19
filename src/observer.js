@@ -1,11 +1,15 @@
 /**
- * The chat-transcript observer: turns the rendered answer into character
- * deltas, which the engine turns into beats.
+ * The chat-transcript observer: turns the rendered assistant text into
+ * character deltas, which the engine turns into beats.
  *
  * Why the rendered transcript: a streaming chat node exposes no per-character
  * signal on its slot props, and "the music follows what is being typed" means
  * reading what the host actually painted. The watcher is limited to the
  * `data-chat-flow-kind` wrappers the Conversation layer already publishes.
+ *
+ * Both halves of an assistant step count: the thinking half
+ * (`data-chat-group-part="reasoning"`) and the answer prose both stream token by
+ * token, so both sound. Tool rows are a different flow kind and do not.
  *
  * The hard part is telling a stream from a repaint. The host reuses rows,
  * mounts finished answers whole, re-renders markdown as it becomes valid, and
@@ -111,9 +115,15 @@ function readFlow(root) {
   return { text, count: kept.length, kept };
 }
 
-/** The default root filter: the assistant's own prose, not its thinking half. */
+/**
+ * The default root filter: any rendered assistant step.
+ *
+ * The thinking half carries `data-chat-group-part="reasoning"` and the answer
+ * prose does not; both stream token by token and both should sound. Tool rows
+ * are `turn-process`, not `assistant-step`, so they stay out.
+ */
 function isAnswerRoot(root) {
-  return attributeOf(root, "data-chat-flow-kind") === "assistant-step" && attributeOf(root, "data-chat-group-part") !== "reasoning";
+  return attributeOf(root, "data-chat-flow-kind") === "assistant-step";
 }
 
 /** Reads the rendered transcript and reports the characters that appeared. */

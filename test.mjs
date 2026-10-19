@@ -20,7 +20,7 @@ const DEFS = [
   ["chimes", ["settings"], "src/chimes.js"],
   ["engine", ["presets"], "src/engine.js"],
   ["observer", [], "src/observer.js"],
-  ["sessions", ["settings"], "src/sessions.js"],
+  ["sessions", ["presets", "settings"], "src/sessions.js"],
   [
     "client",
     ["presets", "settings", "chimes", "engine", "observer", "sessions"],
@@ -425,8 +425,8 @@ function fakeEngine() {
     setVolume(id, volume) {
       this.calls.push(["volume", id, volume]);
     },
-    note(id, characters) {
-      this.calls.push(["note", id, characters]);
+    note(id, characters, velocity) {
+      this.calls.push(["note", id, characters, velocity]);
       return true;
     },
   };
@@ -534,6 +534,48 @@ test("text in the current answer drives beats; background sessions get a slow pu
   assert.equal(after, before, "the ambience pulse respects its 700–1100 ms gap");
 });
 
+test("a quiet working pulse keeps the current session audible during tools and pauses", () => {
+  let now = 0;
+  const { engine, voices } = buildVoices({ clock: () => now });
+  voices.apply(new Map([["a", { running: true }]]));
+  const notes = () => engine.calls.filter((call) => call[0] === "note");
+  assert.equal(notes().length, 0, "no pulse while a turn is just starting");
+
+  now = sessions.WORKING_PULSE_IDLE_MS - 200;
+  voices.tick();
+  assert.equal(notes().length, 0, "the idle window still holds");
+
+  now = sessions.WORKING_PULSE_IDLE_MS + 100;
+  voices.tick();
+  assert.deepEqual(notes(), [["note", "a", presets.TOKENS_PER_BEAT, sessions.WORKING_PULSE_VELOCITY]]);
+
+  now += sessions.WORKING_PULSE_INTERVAL_MS - 100;
+  voices.tick();
+  assert.equal(notes().length, 1, "the pulse interval is respected");
+
+  now += 200;
+  voices.tick();
+  assert.equal(notes().length, 2);
+
+  // A token beat resets the idle window, so a pulse never doubles up on text.
+  voices.onCurrentCharacters("abcd");
+  const afterText = notes().length;
+  assert.equal(afterText, 3, "the text beat itself is scheduled");
+  now += 100;
+  voices.tick();
+  assert.equal(notes().length, afterText, "no pulse right after a text beat");
+});
+
+test("a waiting session never pulses", () => {
+  let now = 0;
+  const { engine, voices } = buildVoices({ clock: () => now });
+  voices.apply(new Map([["a", { running: true }]]));
+  voices.apply(new Map([["a", { running: true, pendingInteraction: { kind: "approval", id: "p1", turnId: "t1" } }]]));
+  now = sessions.WORKING_PULSE_IDLE_MS + 500;
+  voices.tick();
+  assert.equal(engine.calls.filter((call) => call[0] === "note").length, 0);
+});
+
 // ---------------------------------------------------------------------------
 // Observer
 // ---------------------------------------------------------------------------
@@ -554,6 +596,17 @@ test("the flow root is the nearest data-chat-flow-kind wrapper", () => {
   outer.appendChild(inner);
   assert.equal(observer.flowRootOf(inner), outer);
   assert.equal(observer.flowRootOf(new FakeElement("SPAN")), null);
+});
+
+test("thinking text is tracked as well as answer prose", () => {
+  const thinking = new FakeElement("DIV", {
+    attrs: { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "reasoning" },
+  });
+  const prose = new FakeElement("DIV", { attrs: { "data-chat-flow-kind": "assistant-step" } });
+  const tool = new FakeElement("DIV", { attrs: { "data-chat-flow-kind": "turn-process" } });
+  assert.equal(observer.isAnswerRoot(thinking), true);
+  assert.equal(observer.isAnswerRoot(prose), true);
+  assert.equal(observer.isAnswerRoot(tool), false);
 });
 
 test("the observer baselines mounted text and reports typed deltas only", () => {

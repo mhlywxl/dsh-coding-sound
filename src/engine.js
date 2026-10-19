@@ -254,9 +254,13 @@ class MusicEngine {
    * are dropped rather than queued, which is what keeps the music on the text
    * that is being typed now instead of trailing it.
    *
+   * @param {string} sessionId
+   * @param {number} characters
+   * @param {number} [velocity] envelope scale, 1 = a normal text beat; the
+   *   working pulse uses a lower value so it reads as background
    * @returns {boolean} whether a note was scheduled
    */
-  note(sessionId, characters) {
+  note(sessionId, characters, velocity = 1) {
     const voice = this.voices.get(sessionId);
     if (voice === undefined || voice.paused || voice.stopping) return false;
     if (this.chain === null || this.bus.audio === null) return false;
@@ -271,7 +275,7 @@ class MusicEngine {
     const now = this.clock();
     if (now - (this.lastBeat.get(sessionId) ?? -Infinity) < MIN_BEAT_INTERVAL_MS) return false;
     this.lastBeat.set(sessionId, now);
-    return this.#playNote();
+    return this.#playNote(velocity);
   }
 
   /**
@@ -433,8 +437,8 @@ class MusicEngine {
     }
   }
 
-  /** Schedule one note on the shared chain. */
-  #playNote() {
+  /** Schedule one note on the shared chain; `velocity` scales the envelope. */
+  #playNote(velocity = 1) {
     const chain = this.chain;
     if (chain === null) return false;
     let context;
@@ -444,6 +448,7 @@ class MusicEngine {
       return false;
     }
     const config = chain.config;
+    const level = Number.isFinite(velocity) ? Math.min(1, Math.max(0, velocity)) : 1;
     const useLow = this.random() < LOW_OCTAVE_CHANCE;
     const scale = useLow ? OCTAVE_FREQS : SCALE_FREQS;
     const freq = scale[Math.floor(this.random() * scale.length)] ?? SCALE_FREQS[0];
@@ -458,9 +463,9 @@ class MusicEngine {
       const envelope = context.createGain();
       const gain = envelope.gain;
       gain.setValueAtTime(0, start);
-      gain.linearRampToValueAtTime(1, start + config.attack);
-      gain.linearRampToValueAtTime(config.sustain, start + config.attack + config.decay);
-      gain.setValueAtTime(config.sustain, start + config.attack + config.decay + 0.01);
+      gain.linearRampToValueAtTime(level, start + config.attack);
+      gain.linearRampToValueAtTime(config.sustain * level, start + config.attack + config.decay);
+      gain.setValueAtTime(config.sustain * level, start + config.attack + config.decay + 0.01);
       gain.linearRampToValueAtTime(0.001, start + config.attack + config.decay + 0.01 + config.release);
 
       osc.connect(envelope);

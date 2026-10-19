@@ -26,7 +26,7 @@ const MODULES = [
   { file: "src/chimes.js", dir: "chimes", deps: ["settings"] },
   { file: "src/engine.js", dir: "engine", deps: ["presets"] },
   { file: "src/observer.js", dir: "observer", deps: [] },
-  { file: "src/sessions.js", dir: "sessions", deps: ["settings"] },
+  { file: "src/sessions.js", dir: "sessions", deps: ["presets", "settings"] },
   { file: "src/client.js", dir: "client", deps: ["presets", "settings", "chimes", "engine", "observer", "sessions"] },
 ];
 

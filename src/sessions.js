@@ -17,6 +17,7 @@
  */
 
 const { shouldPlayAttentionChimeForEvent } = settings;
+const { TOKENS_PER_BEAT } = presets;
 
 /** The completion chime waits this long, so a two-step turn never rings twice. */
 const SUCCESS_CHIME_DEBOUNCE_MS = 320;
@@ -26,6 +27,21 @@ const OTHER_SESSION_PULSE_MIN_MS = 700;
 const OTHER_SESSION_PULSE_SPREAD_MS = 400;
 /** How often the pulse scheduler wakes up, in milliseconds. */
 const PULSE_TICK_MS = 250;
+
+/**
+ * The current session's working pulse.
+ *
+ * Reasoning streams token by token and drives notes on its own; tool execution
+ * and long pauses do not produce text at all. Once the current answer has been
+ * quiet for {@link WORKING_PULSE_IDLE_MS}, a soft note every
+ * {@link WORKING_PULSE_INTERVAL_MS} keeps "still working" audible — the same
+ * idea as the non-current ambience, at the current-session volume and a lower
+ * velocity so it reads as a pulse rather than another token.
+ */
+const WORKING_PULSE_IDLE_MS = 1200;
+const WORKING_PULSE_INTERVAL_MS = 900;
+/** Velocity of a working pulse relative to a text-driven beat. */
+const WORKING_PULSE_VELOCITY = 0.55;
 
 const APPROVAL_KINDS = new Set(["approval", "approval_request", "approval-request"]);
 const ASK_KINDS = new Set(["ask", "ask_request", "ask-request", "question", "user-question", "user_question"]);
@@ -156,6 +172,10 @@ class SessionVoices {
     this.seenAttention = new Set();
     /** @type {Map<string, number>} last ambience beat per non-current session */
     this.lastPulse = new Map();
+    /** Wall-clock time of the last text beat in the current conversation. */
+    this.lastCurrentActivity = 0;
+    /** @type {Map<string, number>} last working pulse per session */
+    this.lastWorkingPulse = new Map();
     /** @type {Map<string, ReturnType<typeof setTimeout>>} completion debounce timers */
     this.successTimers = new Map();
     this.pulseTimer = null;
@@ -170,6 +190,7 @@ class SessionVoices {
       // transition: start their voices, but do not ring a chime for old news.
       this.baselined = true;
       this.states = next;
+      this.lastCurrentActivity = this.clock();
       for (const [id, state] of next) this.#syncVoice(id, state);
       this.#pulse();
       return { started: [], stopped: [], pendingStarted: [], pendingEnded: [] };
@@ -178,23 +199,32 @@ class SessionVoices {
     const edges = deriveSessionEdges(this.states, next);
     this.states = next;
 
-    for (const id of edges.started) this.#syncVoice(id, next.get(id));
+    for (const id of edges.started) {
+      this.#syncVoice(id, next.get(id));
+      // A fresh turn on screen: give it the full idle window before a pulse.
+      if (id === this.getCurrentId()) this.lastCurrentActivity = this.clock();
+    }
 
     for (const id of edges.stopped) {
       this.engine.stopVoice(id);
       this.lastPulse.delete(id);
+      this.lastWorkingPulse.delete(id);
       this.#scheduleSuccessChime(id);
     }
 
     for (const id of edges.pendingStarted) {
       this.engine.pauseVoice(id);
       this.lastPulse.delete(id);
+      this.lastWorkingPulse.delete(id);
       this.#ringAttentionChime(id);
     }
 
     for (const id of edges.pendingEnded) {
       const state = next.get(id);
-      if (state?.running) this.engine.resumeVoice(id);
+      if (state?.running) {
+        this.engine.resumeVoice(id);
+        if (id === this.getCurrentId()) this.lastCurrentActivity = this.clock();
+      }
     }
 
     this.#pulse();
@@ -206,6 +236,9 @@ class SessionVoices {
     for (const [id, state] of this.states) {
       if (state.running) this.engine.setVolume(id, this.#volumeFor(id));
     }
+    // Switching conversations is not "the current answer went quiet": start its
+    // idle window from now.
+    this.lastCurrentActivity = this.clock();
     this.#pulse();
   }
 
@@ -224,6 +257,7 @@ class SessionVoices {
     if (id === undefined) return;
     const state = this.states.get(id);
     if (state === undefined || !state.running || state.pending) return;
+    this.lastCurrentActivity = this.clock();
     this.engine.note(id, characters.length);
   }
 
@@ -246,6 +280,7 @@ class SessionVoices {
     for (const timer of this.successTimers.values()) clearTimeout(timer);
     this.successTimers.clear();
     this.lastPulse.clear();
+    this.lastWorkingPulse.clear();
     this.seenAttention.clear();
     this.states.clear();
   }
@@ -302,20 +337,30 @@ class SessionVoices {
   }
 
   /**
-   * Non-current ambience.
+   * Ambience for sessions the token stream cannot reach.
    *
-   * Only the current conversation's text is in the DOM, so a background session
-   * cannot be driven by its own tokens from the browser. It still gets music
-   * while it works — a slow, quiet pulse on the other-session volume — and
-   * switches to token-driven beats the moment the user opens it.
+   * The current conversation is token-driven while text arrives, then falls back
+   * to a soft working pulse after {@link WORKING_PULSE_IDLE_MS} of quiet — that
+   * is what keeps reasoning pauses, tool execution and long waits audible.
+   * Background sessions have no DOM of their own, so they always use a slower
+   * pulse on the other-session volume until the user opens them.
    */
   #pulse() {
     if (this.disposed) return;
     const now = this.clock();
     const current = this.getCurrentId();
     for (const [id, state] of this.states) {
-      if (!state.running || state.pending || id === current) {
+      if (!state.running || state.pending) {
         this.lastPulse.delete(id);
+        this.lastWorkingPulse.delete(id);
+        continue;
+      }
+      if (id === current) {
+        if (now - this.lastCurrentActivity < WORKING_PULSE_IDLE_MS) continue;
+        const lastPulse = this.lastWorkingPulse.get(id);
+        if (lastPulse !== undefined && now - lastPulse < WORKING_PULSE_INTERVAL_MS) continue;
+        this.lastWorkingPulse.set(id, now);
+        this.engine.note(id, TOKENS_PER_BEAT, WORKING_PULSE_VELOCITY);
         continue;
       }
       const last = this.lastPulse.get(id);
@@ -326,7 +371,7 @@ class SessionVoices {
         continue;
       }
       this.lastPulse.set(id, now);
-      this.engine.note(id, 4);
+      this.engine.note(id, TOKENS_PER_BEAT);
     }
   }
 }
@@ -336,6 +381,9 @@ module.exports = {
   OTHER_SESSION_PULSE_MIN_MS,
   OTHER_SESSION_PULSE_SPREAD_MS,
   PULSE_TICK_MS,
+  WORKING_PULSE_IDLE_MS,
+  WORKING_PULSE_INTERVAL_MS,
+  WORKING_PULSE_VELOCITY,
   pendingIdentity,
   stableSignature,
   normalizeEntry,

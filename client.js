@@ -965,9 +965,13 @@ window.__ModuleLoader__.load({
            * are dropped rather than queued, which is what keeps the music on the text
            * that is being typed now instead of trailing it.
            *
+           * @param {string} sessionId
+           * @param {number} characters
+           * @param {number} [velocity] envelope scale, 1 = a normal text beat; the
+           *   working pulse uses a lower value so it reads as background
            * @returns {boolean} whether a note was scheduled
            */
-          note(sessionId, characters) {
+          note(sessionId, characters, velocity = 1) {
             const voice = this.voices.get(sessionId);
             if (voice === undefined || voice.paused || voice.stopping) return false;
             if (this.chain === null || this.bus.audio === null) return false;
@@ -982,7 +986,7 @@ window.__ModuleLoader__.load({
             const now = this.clock();
             if (now - (this.lastBeat.get(sessionId) ?? -Infinity) < MIN_BEAT_INTERVAL_MS) return false;
             this.lastBeat.set(sessionId, now);
-            return this.#playNote();
+            return this.#playNote(velocity);
           }
 
           /**
@@ -1144,8 +1148,8 @@ window.__ModuleLoader__.load({
             }
           }
 
-          /** Schedule one note on the shared chain. */
-          #playNote() {
+          /** Schedule one note on the shared chain; `velocity` scales the envelope. */
+          #playNote(velocity = 1) {
             const chain = this.chain;
             if (chain === null) return false;
             let context;
@@ -1155,6 +1159,7 @@ window.__ModuleLoader__.load({
               return false;
             }
             const config = chain.config;
+            const level = Number.isFinite(velocity) ? Math.min(1, Math.max(0, velocity)) : 1;
             const useLow = this.random() < LOW_OCTAVE_CHANCE;
             const scale = useLow ? OCTAVE_FREQS : SCALE_FREQS;
             const freq = scale[Math.floor(this.random() * scale.length)] ?? SCALE_FREQS[0];
@@ -1169,9 +1174,9 @@ window.__ModuleLoader__.load({
               const envelope = context.createGain();
               const gain = envelope.gain;
               gain.setValueAtTime(0, start);
-              gain.linearRampToValueAtTime(1, start + config.attack);
-              gain.linearRampToValueAtTime(config.sustain, start + config.attack + config.decay);
-              gain.setValueAtTime(config.sustain, start + config.attack + config.decay + 0.01);
+              gain.linearRampToValueAtTime(level, start + config.attack);
+              gain.linearRampToValueAtTime(config.sustain * level, start + config.attack + config.decay);
+              gain.setValueAtTime(config.sustain * level, start + config.attack + config.decay + 0.01);
               gain.linearRampToValueAtTime(0.001, start + config.attack + config.decay + 0.01 + config.release);
 
               osc.connect(envelope);
@@ -1235,13 +1240,17 @@ window.__ModuleLoader__.load({
     //#region src/observer.js
     registry.define("observer", [], function (module, exports, require) {
         /**
-         * The chat-transcript observer: turns the rendered answer into character
-         * deltas, which the engine turns into beats.
+         * The chat-transcript observer: turns the rendered assistant text into
+         * character deltas, which the engine turns into beats.
          *
          * Why the rendered transcript: a streaming chat node exposes no per-character
          * signal on its slot props, and "the music follows what is being typed" means
          * reading what the host actually painted. The watcher is limited to the
          * `data-chat-flow-kind` wrappers the Conversation layer already publishes.
+         *
+         * Both halves of an assistant step count: the thinking half
+         * (`data-chat-group-part="reasoning"`) and the answer prose both stream token by
+         * token, so both sound. Tool rows are a different flow kind and do not.
          *
          * The hard part is telling a stream from a repaint. The host reuses rows,
          * mounts finished answers whole, re-renders markdown as it becomes valid, and
@@ -1347,9 +1356,15 @@ window.__ModuleLoader__.load({
           return { text, count: kept.length, kept };
         }
 
-        /** The default root filter: the assistant's own prose, not its thinking half. */
+        /**
+         * The default root filter: any rendered assistant step.
+         *
+         * The thinking half carries `data-chat-group-part="reasoning"` and the answer
+         * prose does not; both stream token by token and both should sound. Tool rows
+         * are `turn-process`, not `assistant-step`, so they stay out.
+         */
         function isAnswerRoot(root) {
-          return attributeOf(root, "data-chat-flow-kind") === "assistant-step" && attributeOf(root, "data-chat-group-part") !== "reasoning";
+          return attributeOf(root, "data-chat-flow-kind") === "assistant-step";
         }
 
         /** Reads the rendered transcript and reports the characters that appeared. */
@@ -1499,7 +1514,7 @@ window.__ModuleLoader__.load({
     //#endregion src/observer.js
 
     //#region src/sessions.js
-    registry.define("sessions", ["settings"], function (module, exports, require, settings) {
+    registry.define("sessions", ["presets", "settings"], function (module, exports, require, presets, settings) {
         /**
          * Session state → sound edges, and the per-session music lifecycle.
          *
@@ -1519,6 +1534,7 @@ window.__ModuleLoader__.load({
          */
 
         const { shouldPlayAttentionChimeForEvent } = settings;
+        const { TOKENS_PER_BEAT } = presets;
 
         /** The completion chime waits this long, so a two-step turn never rings twice. */
         const SUCCESS_CHIME_DEBOUNCE_MS = 320;
@@ -1528,6 +1544,21 @@ window.__ModuleLoader__.load({
         const OTHER_SESSION_PULSE_SPREAD_MS = 400;
         /** How often the pulse scheduler wakes up, in milliseconds. */
         const PULSE_TICK_MS = 250;
+
+        /**
+         * The current session's working pulse.
+         *
+         * Reasoning streams token by token and drives notes on its own; tool execution
+         * and long pauses do not produce text at all. Once the current answer has been
+         * quiet for {@link WORKING_PULSE_IDLE_MS}, a soft note every
+         * {@link WORKING_PULSE_INTERVAL_MS} keeps "still working" audible — the same
+         * idea as the non-current ambience, at the current-session volume and a lower
+         * velocity so it reads as a pulse rather than another token.
+         */
+        const WORKING_PULSE_IDLE_MS = 1200;
+        const WORKING_PULSE_INTERVAL_MS = 900;
+        /** Velocity of a working pulse relative to a text-driven beat. */
+        const WORKING_PULSE_VELOCITY = 0.55;
 
         const APPROVAL_KINDS = new Set(["approval", "approval_request", "approval-request"]);
         const ASK_KINDS = new Set(["ask", "ask_request", "ask-request", "question", "user-question", "user_question"]);
@@ -1658,6 +1689,10 @@ window.__ModuleLoader__.load({
             this.seenAttention = new Set();
             /** @type {Map<string, number>} last ambience beat per non-current session */
             this.lastPulse = new Map();
+            /** Wall-clock time of the last text beat in the current conversation. */
+            this.lastCurrentActivity = 0;
+            /** @type {Map<string, number>} last working pulse per session */
+            this.lastWorkingPulse = new Map();
             /** @type {Map<string, ReturnType<typeof setTimeout>>} completion debounce timers */
             this.successTimers = new Map();
             this.pulseTimer = null;
@@ -1672,6 +1707,7 @@ window.__ModuleLoader__.load({
               // transition: start their voices, but do not ring a chime for old news.
               this.baselined = true;
               this.states = next;
+              this.lastCurrentActivity = this.clock();
               for (const [id, state] of next) this.#syncVoice(id, state);
               this.#pulse();
               return { started: [], stopped: [], pendingStarted: [], pendingEnded: [] };
@@ -1680,23 +1716,32 @@ window.__ModuleLoader__.load({
             const edges = deriveSessionEdges(this.states, next);
             this.states = next;
 
-            for (const id of edges.started) this.#syncVoice(id, next.get(id));
+            for (const id of edges.started) {
+              this.#syncVoice(id, next.get(id));
+              // A fresh turn on screen: give it the full idle window before a pulse.
+              if (id === this.getCurrentId()) this.lastCurrentActivity = this.clock();
+            }
 
             for (const id of edges.stopped) {
               this.engine.stopVoice(id);
               this.lastPulse.delete(id);
+              this.lastWorkingPulse.delete(id);
               this.#scheduleSuccessChime(id);
             }
 
             for (const id of edges.pendingStarted) {
               this.engine.pauseVoice(id);
               this.lastPulse.delete(id);
+              this.lastWorkingPulse.delete(id);
               this.#ringAttentionChime(id);
             }
 
             for (const id of edges.pendingEnded) {
               const state = next.get(id);
-              if (state?.running) this.engine.resumeVoice(id);
+              if (state?.running) {
+                this.engine.resumeVoice(id);
+                if (id === this.getCurrentId()) this.lastCurrentActivity = this.clock();
+              }
             }
 
             this.#pulse();
@@ -1708,6 +1753,9 @@ window.__ModuleLoader__.load({
             for (const [id, state] of this.states) {
               if (state.running) this.engine.setVolume(id, this.#volumeFor(id));
             }
+            // Switching conversations is not "the current answer went quiet": start its
+            // idle window from now.
+            this.lastCurrentActivity = this.clock();
             this.#pulse();
           }
 
@@ -1726,6 +1774,7 @@ window.__ModuleLoader__.load({
             if (id === undefined) return;
             const state = this.states.get(id);
             if (state === undefined || !state.running || state.pending) return;
+            this.lastCurrentActivity = this.clock();
             this.engine.note(id, characters.length);
           }
 
@@ -1748,6 +1797,7 @@ window.__ModuleLoader__.load({
             for (const timer of this.successTimers.values()) clearTimeout(timer);
             this.successTimers.clear();
             this.lastPulse.clear();
+            this.lastWorkingPulse.clear();
             this.seenAttention.clear();
             this.states.clear();
           }
@@ -1804,20 +1854,30 @@ window.__ModuleLoader__.load({
           }
 
           /**
-           * Non-current ambience.
+           * Ambience for sessions the token stream cannot reach.
            *
-           * Only the current conversation's text is in the DOM, so a background session
-           * cannot be driven by its own tokens from the browser. It still gets music
-           * while it works — a slow, quiet pulse on the other-session volume — and
-           * switches to token-driven beats the moment the user opens it.
+           * The current conversation is token-driven while text arrives, then falls back
+           * to a soft working pulse after {@link WORKING_PULSE_IDLE_MS} of quiet — that
+           * is what keeps reasoning pauses, tool execution and long waits audible.
+           * Background sessions have no DOM of their own, so they always use a slower
+           * pulse on the other-session volume until the user opens them.
            */
           #pulse() {
             if (this.disposed) return;
             const now = this.clock();
             const current = this.getCurrentId();
             for (const [id, state] of this.states) {
-              if (!state.running || state.pending || id === current) {
+              if (!state.running || state.pending) {
                 this.lastPulse.delete(id);
+                this.lastWorkingPulse.delete(id);
+                continue;
+              }
+              if (id === current) {
+                if (now - this.lastCurrentActivity < WORKING_PULSE_IDLE_MS) continue;
+                const lastPulse = this.lastWorkingPulse.get(id);
+                if (lastPulse !== undefined && now - lastPulse < WORKING_PULSE_INTERVAL_MS) continue;
+                this.lastWorkingPulse.set(id, now);
+                this.engine.note(id, TOKENS_PER_BEAT, WORKING_PULSE_VELOCITY);
                 continue;
               }
               const last = this.lastPulse.get(id);
@@ -1828,7 +1888,7 @@ window.__ModuleLoader__.load({
                 continue;
               }
               this.lastPulse.set(id, now);
-              this.engine.note(id, 4);
+              this.engine.note(id, TOKENS_PER_BEAT);
             }
           }
         }
@@ -1838,6 +1898,9 @@ window.__ModuleLoader__.load({
           OTHER_SESSION_PULSE_MIN_MS,
           OTHER_SESSION_PULSE_SPREAD_MS,
           PULSE_TICK_MS,
+          WORKING_PULSE_IDLE_MS,
+          WORKING_PULSE_INTERVAL_MS,
+          WORKING_PULSE_VELOCITY,
           pendingIdentity,
           stableSignature,
           normalizeEntry,
