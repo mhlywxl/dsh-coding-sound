@@ -116,6 +116,8 @@ class MusicEngine {
     this.voices = new Map();
     /** @type {Map<string, number>} characters waiting to reach a whole beat */
     this.carry = new Map();
+    /** @type {Map<string, string>} phase the carry belongs to, so a phase switch starts clean */
+    this.carryPhase = new Map();
     /** @type {Map<string, number>} wall-clock time of the last beat per session */
     this.lastBeat = new Map();
     /** @type {Map<string, AudioBuffer>} impulse responses, keyed by decay */
@@ -177,6 +179,7 @@ class MusicEngine {
     gain.connect(this.chain.filter);
     this.voices.set(sessionId, { gain, volume, paused: false, stopping: false });
     this.carry.set(sessionId, 0);
+    this.carryPhase.delete(sessionId);
     this.lastBeat.delete(sessionId);
     this.#ramp(gain.gain, volume, VOICE_FADE_SECONDS);
     return true;
@@ -218,6 +221,7 @@ class MusicEngine {
       if (current !== voice) return;
       this.voices.delete(sessionId);
       this.carry.delete(sessionId);
+      this.carryPhase.delete(sessionId);
       this.lastBeat.delete(sessionId);
       try {
         voice.gain.disconnect();
@@ -241,6 +245,7 @@ class MusicEngine {
     }
     this.voices.clear();
     this.carry.clear();
+    this.carryPhase.clear();
     this.lastBeat.clear();
     this.#teardownChain();
   }
@@ -249,33 +254,61 @@ class MusicEngine {
    * Feed streamed characters into one session's beat counter.
    *
    * Double throttling, copied from the reference: one beat per
-   * {@link TOKENS_PER_BEAT} characters, and never two beats closer than
+   * `charactersPerBeat` characters, and never two beats closer than
    * {@link MIN_BEAT_INTERVAL_MS}. Characters that arrive during the throttle
    * are dropped rather than queued, which is what keeps the music on the text
    * that is being typed now instead of trailing it.
    *
    * @param {string} sessionId
    * @param {number} characters
-   * @param {number} [velocity] envelope scale, 1 = a normal text beat; the
-   *   working pulse uses a lower value so it reads as background
+   * @param {{charactersPerBeat?: number, velocity?: number, pitch?: "low"|"normal"|"high", phase?: string}} [options]
+   *   `charactersPerBeat` is the per-phase density, `velocity` scales the
+   *   envelope (the working pulse uses a lower value), `pitch` transposes the
+   *   note by octaves, and `phase` resets the carry when the streamed phase
+   *   changes so a reasoning remainder cannot sound in the answer.
    * @returns {boolean} whether a note was scheduled
    */
-  note(sessionId, characters, velocity = 1) {
+  note(sessionId, characters, options = {}) {
     const voice = this.voices.get(sessionId);
     if (voice === undefined || voice.paused || voice.stopping) return false;
     if (this.chain === null || this.bus.audio === null) return false;
     if (!Number.isFinite(characters) || characters <= 0) return false;
+    const perBeat = Number.isFinite(options.charactersPerBeat)
+      ? Math.min(8, Math.max(1, Math.round(options.charactersPerBeat)))
+      : TOKENS_PER_BEAT;
+    const phase = typeof options.phase === "string" ? options.phase : "answer";
+    if (this.carryPhase.get(sessionId) !== phase) {
+      this.carry.set(sessionId, 0);
+      this.carryPhase.set(sessionId, phase);
+    }
     const carry = (this.carry.get(sessionId) ?? 0) + characters;
-    const beats = Math.floor(carry / TOKENS_PER_BEAT);
+    const beats = Math.floor(carry / perBeat);
     if (beats <= 0) {
       this.carry.set(sessionId, carry);
       return false;
     }
-    this.carry.set(sessionId, carry % TOKENS_PER_BEAT);
+    this.carry.set(sessionId, carry % perBeat);
     const now = this.clock();
     if (now - (this.lastBeat.get(sessionId) ?? -Infinity) < MIN_BEAT_INTERVAL_MS) return false;
     this.lastBeat.set(sessionId, now);
-    return this.#playNote(velocity);
+    return this.#playNote(options.velocity ?? 1, options.pitch ?? "normal");
+  }
+
+  /**
+   * Play one pulse note, bypassing the character carry.
+   *
+   * Used for the tool/idle phase, where there is no text to count. The same
+   * per-session voice and throttle apply, so a pulse can never double up with a
+   * text beat.
+   */
+  pulse(sessionId, options = {}) {
+    const voice = this.voices.get(sessionId);
+    if (voice === undefined || voice.paused || voice.stopping) return false;
+    if (this.chain === null || this.bus.audio === null) return false;
+    const now = this.clock();
+    if (now - (this.lastBeat.get(sessionId) ?? -Infinity) < MIN_BEAT_INTERVAL_MS) return false;
+    this.lastBeat.set(sessionId, now);
+    return this.#playNote(options.velocity ?? 1, options.pitch ?? "normal");
   }
 
   /**
@@ -438,7 +471,7 @@ class MusicEngine {
   }
 
   /** Schedule one note on the shared chain; `velocity` scales the envelope. */
-  #playNote(velocity = 1) {
+  #playNote(velocity = 1, pitch = "normal") {
     const chain = this.chain;
     if (chain === null) return false;
     let context;
@@ -449,6 +482,7 @@ class MusicEngine {
     }
     const config = chain.config;
     const level = Number.isFinite(velocity) ? Math.min(1, Math.max(0, velocity)) : 1;
+    const pitchShift = pitch === "low" ? 0.5 : pitch === "high" ? 2 : 1;
     const useLow = this.random() < LOW_OCTAVE_CHANCE;
     const scale = useLow ? OCTAVE_FREQS : SCALE_FREQS;
     const freq = scale[Math.floor(this.random() * scale.length)] ?? SCALE_FREQS[0];
@@ -458,7 +492,7 @@ class MusicEngine {
     try {
       const osc = context.createOscillator();
       osc.type = config.oscillatorType;
-      osc.frequency.setValueAtTime(freq * detune, start);
+      osc.frequency.setValueAtTime(freq * detune * pitchShift, start);
 
       const envelope = context.createGain();
       const gain = envelope.gain;

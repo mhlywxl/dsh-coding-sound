@@ -16,7 +16,7 @@
  *    never rings it.
  */
 
-const { shouldPlayAttentionChimeForEvent } = settings;
+const { shouldPlayAttentionChimeForEvent, TOOL_PULSE_INTERVALS } = settings;
 const { TOKENS_PER_BEAT } = presets;
 
 /** The completion chime waits this long, so a two-step turn never rings twice. */
@@ -33,13 +33,12 @@ const PULSE_TICK_MS = 250;
  *
  * Reasoning streams token by token and drives notes on its own; tool execution
  * and long pauses do not produce text at all. Once the current answer has been
- * quiet for {@link WORKING_PULSE_IDLE_MS}, a soft note every
- * {@link WORKING_PULSE_INTERVAL_MS} keeps "still working" audible — the same
- * idea as the non-current ambience, at the current-session volume and a lower
- * velocity so it reads as a pulse rather than another token.
+ * quiet for {@link WORKING_PULSE_IDLE_MS}, a soft note at the speed selected by
+ * the `toolSound` setting keeps "still working" audible — the same idea as the
+ * non-current ambience, at the current-session volume and a lower velocity so
+ * it reads as a pulse rather than another token.
  */
 const WORKING_PULSE_IDLE_MS = 1200;
-const WORKING_PULSE_INTERVAL_MS = 900;
 /** Velocity of a working pulse relative to a text-driven beat. */
 const WORKING_PULSE_VELOCITY = 0.55;
 
@@ -250,15 +249,30 @@ class SessionVoices {
     for (const [id, state] of this.states) this.#syncVoice(id, state);
   }
 
-  /** Characters that appeared in the current conversation; drives its beats. */
-  onCurrentCharacters(characters) {
+  /**
+   * Characters that appeared in the current conversation; drives its beats.
+   *
+   * The observer labels each delta with its phase. Thinking and answer prose
+   * each have their own density, pitch, and on/off switch; a muted phase still
+   * counts as activity, so the tool/idle pulse does not fill a stream the user
+   * deliberately silenced.
+   */
+  onCurrentCharacters(characters, phase = "answer") {
     if (this.disposed || characters.length === 0) return;
     const id = this.getCurrentId();
     if (id === undefined) return;
     const state = this.states.get(id);
     if (state === undefined || !state.running || state.pending) return;
     this.lastCurrentActivity = this.clock();
-    this.engine.note(id, characters.length);
+    const settingsValue = this.getSettings();
+    const thinking = phase === "thinking";
+    const audible = thinking ? settingsValue.thinkingSound : settingsValue.answerSound;
+    if (!audible) return;
+    this.engine.note(id, characters.length, {
+      charactersPerBeat: thinking ? settingsValue.thinkingDensity : settingsValue.answerDensity,
+      pitch: thinking ? settingsValue.thinkingPitch : settingsValue.answerPitch,
+      phase,
+    });
   }
 
   /** Start the ambience scheduler; `setInterval` is cleared by `dispose`. */
@@ -356,11 +370,15 @@ class SessionVoices {
         continue;
       }
       if (id === current) {
+        // `toolSound` is the phase's own switch: `off` removes the speed, which
+        // silences the pulse entirely.
+        const interval = TOOL_PULSE_INTERVALS[this.getSettings().toolSound];
+        if (interval === undefined) continue;
         if (now - this.lastCurrentActivity < WORKING_PULSE_IDLE_MS) continue;
         const lastPulse = this.lastWorkingPulse.get(id);
-        if (lastPulse !== undefined && now - lastPulse < WORKING_PULSE_INTERVAL_MS) continue;
+        if (lastPulse !== undefined && now - lastPulse < interval) continue;
         this.lastWorkingPulse.set(id, now);
-        this.engine.note(id, TOKENS_PER_BEAT, WORKING_PULSE_VELOCITY);
+        this.engine.pulse(id, { velocity: WORKING_PULSE_VELOCITY });
         continue;
       }
       const last = this.lastPulse.get(id);
@@ -382,7 +400,6 @@ module.exports = {
   OTHER_SESSION_PULSE_SPREAD_MS,
   PULSE_TICK_MS,
   WORKING_PULSE_IDLE_MS,
-  WORKING_PULSE_INTERVAL_MS,
   WORKING_PULSE_VELOCITY,
   pendingIdentity,
   stableSignature,

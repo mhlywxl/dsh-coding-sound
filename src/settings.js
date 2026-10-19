@@ -22,6 +22,15 @@ const EXPANDED_KEY = "dsh:coding-sound:expanded";
 /** The chime choices, in the dropdown's order. */
 const SOUND_PREF_IDS = ["off", "synth", "positive", "correct", "start", "back"];
 
+/** Pitch choices for the thinking and answer phases. */
+const PITCH_IDS = ["low", "normal", "high"];
+/** Per-phase beat densities offered by the card, in characters per note. */
+const DENSITY_VALUES = [1, 2, 3, 4, 6, 8];
+/** Tool/idle pulse speeds; `off` silences that phase. */
+const TOOL_SPEED_IDS = ["off", "slow", "normal", "fast"];
+/** Pulse interval per tool speed, in milliseconds. */
+const TOOL_PULSE_INTERVALS = Object.freeze({ slow: 1400, normal: 900, fast: 550 });
+
 /** Every persisted field, in a stable order. */
 const SETTINGS_KEYS = [
   "musicPreset",
@@ -30,11 +39,22 @@ const SETTINGS_KEYS = [
   "attentionSound",
   "musicVolumeCurrent",
   "musicVolumeOther",
+  "thinkingSound",
+  "thinkingDensity",
+  "thinkingPitch",
+  "answerSound",
+  "answerDensity",
+  "answerPitch",
+  "toolSound",
 ];
 
 /**
  * First-run values. A freshly installed plugin is audible — the user installed
  * a sound plugin — while the non-current session layer stays soft at 35%.
+ *
+ * Thinking is denser than the answer (one note per 2 reasoning characters) so a
+ * long reasoning stream reads as continuous music rather than a slow pulse; the
+ * user can change or disable each phase in the settings card.
  */
 const DEFAULTS = Object.freeze({
   musicPreset: "ethereal",
@@ -43,6 +63,13 @@ const DEFAULTS = Object.freeze({
   attentionSound: "synth",
   musicVolumeCurrent: 100,
   musicVolumeOther: 35,
+  thinkingSound: true,
+  thinkingDensity: 2,
+  thinkingPitch: "normal",
+  answerSound: true,
+  answerDensity: 4,
+  answerPitch: "normal",
+  toolSound: "normal",
 });
 
 /** Volume floor/ceiling and slider step for both kinds of volume. */
@@ -67,6 +94,8 @@ const CHIME_VARIANT_LEVEL = Object.freeze({
 
 const PRESET_SET = new Set(PRESET_IDS);
 const SOUND_SET = new Set(SOUND_PREF_IDS);
+const PITCH_SET = new Set(PITCH_IDS);
+const TOOL_SPEED_SET = new Set(TOOL_SPEED_IDS);
 
 /** A stored preset that is no longer offered falls back to the default. */
 function normalizePreset(value, fallback) {
@@ -76,6 +105,27 @@ function normalizePreset(value, fallback) {
 /** A stored chime that is no longer offered falls back to the default. */
 function normalizeSound(value, fallback) {
   return SOUND_SET.has(value) ? value : fallback;
+}
+
+function bool(value, fallback) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+/** A phase pitch, falling back to the default. */
+function normalizePitch(value, fallback) {
+  return PITCH_SET.has(value) ? value : fallback;
+}
+
+/** A tool pulse speed, falling back to the default. */
+function normalizeToolSpeed(value, fallback) {
+  return TOOL_SPEED_SET.has(value) ? value : fallback;
+}
+
+/** Characters per beat, clamped to the offered 1–8 range. */
+function normalizeDensity(value, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(8, Math.max(1, Math.round(numeric)));
 }
 
 /** Clamp one notification volume to 0–100, rounding to the stored integer. */
@@ -104,6 +154,13 @@ function normalizeSettings(raw) {
     attentionSound: normalizeSound(source.attentionSound, DEFAULTS.attentionSound),
     musicVolumeCurrent: normalizeMusicVolume(source.musicVolumeCurrent, DEFAULTS.musicVolumeCurrent),
     musicVolumeOther: normalizeMusicVolume(source.musicVolumeOther, DEFAULTS.musicVolumeOther),
+    thinkingSound: bool(source.thinkingSound, DEFAULTS.thinkingSound),
+    thinkingDensity: normalizeDensity(source.thinkingDensity, DEFAULTS.thinkingDensity),
+    thinkingPitch: normalizePitch(source.thinkingPitch, DEFAULTS.thinkingPitch),
+    answerSound: bool(source.answerSound, DEFAULTS.answerSound),
+    answerDensity: normalizeDensity(source.answerDensity, DEFAULTS.answerDensity),
+    answerPitch: normalizePitch(source.answerPitch, DEFAULTS.answerPitch),
+    toolSound: normalizeToolSpeed(source.toolSound, DEFAULTS.toolSound),
   };
 }
 
@@ -338,6 +395,10 @@ module.exports = {
   EXPANDED_KEY,
   SETTINGS_KEYS,
   SOUND_PREF_IDS,
+  PITCH_IDS,
+  DENSITY_VALUES,
+  TOOL_SPEED_IDS,
+  TOOL_PULSE_INTERVALS,
   DEFAULTS,
   VOLUME_MIN,
   VOLUME_MAX,

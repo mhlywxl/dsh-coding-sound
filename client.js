@@ -179,6 +179,15 @@ window.__ModuleLoader__.load({
         /** The chime choices, in the dropdown's order. */
         const SOUND_PREF_IDS = ["off", "synth", "positive", "correct", "start", "back"];
 
+        /** Pitch choices for the thinking and answer phases. */
+        const PITCH_IDS = ["low", "normal", "high"];
+        /** Per-phase beat densities offered by the card, in characters per note. */
+        const DENSITY_VALUES = [1, 2, 3, 4, 6, 8];
+        /** Tool/idle pulse speeds; `off` silences that phase. */
+        const TOOL_SPEED_IDS = ["off", "slow", "normal", "fast"];
+        /** Pulse interval per tool speed, in milliseconds. */
+        const TOOL_PULSE_INTERVALS = Object.freeze({ slow: 1400, normal: 900, fast: 550 });
+
         /** Every persisted field, in a stable order. */
         const SETTINGS_KEYS = [
           "musicPreset",
@@ -187,11 +196,22 @@ window.__ModuleLoader__.load({
           "attentionSound",
           "musicVolumeCurrent",
           "musicVolumeOther",
+          "thinkingSound",
+          "thinkingDensity",
+          "thinkingPitch",
+          "answerSound",
+          "answerDensity",
+          "answerPitch",
+          "toolSound",
         ];
 
         /**
          * First-run values. A freshly installed plugin is audible — the user installed
          * a sound plugin — while the non-current session layer stays soft at 35%.
+         *
+         * Thinking is denser than the answer (one note per 2 reasoning characters) so a
+         * long reasoning stream reads as continuous music rather than a slow pulse; the
+         * user can change or disable each phase in the settings card.
          */
         const DEFAULTS = Object.freeze({
           musicPreset: "ethereal",
@@ -200,6 +220,13 @@ window.__ModuleLoader__.load({
           attentionSound: "synth",
           musicVolumeCurrent: 100,
           musicVolumeOther: 35,
+          thinkingSound: true,
+          thinkingDensity: 2,
+          thinkingPitch: "normal",
+          answerSound: true,
+          answerDensity: 4,
+          answerPitch: "normal",
+          toolSound: "normal",
         });
 
         /** Volume floor/ceiling and slider step for both kinds of volume. */
@@ -224,6 +251,8 @@ window.__ModuleLoader__.load({
 
         const PRESET_SET = new Set(PRESET_IDS);
         const SOUND_SET = new Set(SOUND_PREF_IDS);
+        const PITCH_SET = new Set(PITCH_IDS);
+        const TOOL_SPEED_SET = new Set(TOOL_SPEED_IDS);
 
         /** A stored preset that is no longer offered falls back to the default. */
         function normalizePreset(value, fallback) {
@@ -233,6 +262,27 @@ window.__ModuleLoader__.load({
         /** A stored chime that is no longer offered falls back to the default. */
         function normalizeSound(value, fallback) {
           return SOUND_SET.has(value) ? value : fallback;
+        }
+
+        function bool(value, fallback) {
+          return typeof value === "boolean" ? value : fallback;
+        }
+
+        /** A phase pitch, falling back to the default. */
+        function normalizePitch(value, fallback) {
+          return PITCH_SET.has(value) ? value : fallback;
+        }
+
+        /** A tool pulse speed, falling back to the default. */
+        function normalizeToolSpeed(value, fallback) {
+          return TOOL_SPEED_SET.has(value) ? value : fallback;
+        }
+
+        /** Characters per beat, clamped to the offered 1–8 range. */
+        function normalizeDensity(value, fallback) {
+          const numeric = Number(value);
+          if (!Number.isFinite(numeric)) return fallback;
+          return Math.min(8, Math.max(1, Math.round(numeric)));
         }
 
         /** Clamp one notification volume to 0–100, rounding to the stored integer. */
@@ -261,6 +311,13 @@ window.__ModuleLoader__.load({
             attentionSound: normalizeSound(source.attentionSound, DEFAULTS.attentionSound),
             musicVolumeCurrent: normalizeMusicVolume(source.musicVolumeCurrent, DEFAULTS.musicVolumeCurrent),
             musicVolumeOther: normalizeMusicVolume(source.musicVolumeOther, DEFAULTS.musicVolumeOther),
+            thinkingSound: bool(source.thinkingSound, DEFAULTS.thinkingSound),
+            thinkingDensity: normalizeDensity(source.thinkingDensity, DEFAULTS.thinkingDensity),
+            thinkingPitch: normalizePitch(source.thinkingPitch, DEFAULTS.thinkingPitch),
+            answerSound: bool(source.answerSound, DEFAULTS.answerSound),
+            answerDensity: normalizeDensity(source.answerDensity, DEFAULTS.answerDensity),
+            answerPitch: normalizePitch(source.answerPitch, DEFAULTS.answerPitch),
+            toolSound: normalizeToolSpeed(source.toolSound, DEFAULTS.toolSound),
           };
         }
 
@@ -495,6 +552,10 @@ window.__ModuleLoader__.load({
           EXPANDED_KEY,
           SETTINGS_KEYS,
           SOUND_PREF_IDS,
+          PITCH_IDS,
+          DENSITY_VALUES,
+          TOOL_SPEED_IDS,
+          TOOL_PULSE_INTERVALS,
           DEFAULTS,
           VOLUME_MIN,
           VOLUME_MAX,
@@ -827,6 +888,8 @@ window.__ModuleLoader__.load({
             this.voices = new Map();
             /** @type {Map<string, number>} characters waiting to reach a whole beat */
             this.carry = new Map();
+            /** @type {Map<string, string>} phase the carry belongs to, so a phase switch starts clean */
+            this.carryPhase = new Map();
             /** @type {Map<string, number>} wall-clock time of the last beat per session */
             this.lastBeat = new Map();
             /** @type {Map<string, AudioBuffer>} impulse responses, keyed by decay */
@@ -888,6 +951,7 @@ window.__ModuleLoader__.load({
             gain.connect(this.chain.filter);
             this.voices.set(sessionId, { gain, volume, paused: false, stopping: false });
             this.carry.set(sessionId, 0);
+            this.carryPhase.delete(sessionId);
             this.lastBeat.delete(sessionId);
             this.#ramp(gain.gain, volume, VOICE_FADE_SECONDS);
             return true;
@@ -929,6 +993,7 @@ window.__ModuleLoader__.load({
               if (current !== voice) return;
               this.voices.delete(sessionId);
               this.carry.delete(sessionId);
+              this.carryPhase.delete(sessionId);
               this.lastBeat.delete(sessionId);
               try {
                 voice.gain.disconnect();
@@ -952,6 +1017,7 @@ window.__ModuleLoader__.load({
             }
             this.voices.clear();
             this.carry.clear();
+            this.carryPhase.clear();
             this.lastBeat.clear();
             this.#teardownChain();
           }
@@ -960,33 +1026,61 @@ window.__ModuleLoader__.load({
            * Feed streamed characters into one session's beat counter.
            *
            * Double throttling, copied from the reference: one beat per
-           * {@link TOKENS_PER_BEAT} characters, and never two beats closer than
+           * `charactersPerBeat` characters, and never two beats closer than
            * {@link MIN_BEAT_INTERVAL_MS}. Characters that arrive during the throttle
            * are dropped rather than queued, which is what keeps the music on the text
            * that is being typed now instead of trailing it.
            *
            * @param {string} sessionId
            * @param {number} characters
-           * @param {number} [velocity] envelope scale, 1 = a normal text beat; the
-           *   working pulse uses a lower value so it reads as background
+           * @param {{charactersPerBeat?: number, velocity?: number, pitch?: "low"|"normal"|"high", phase?: string}} [options]
+           *   `charactersPerBeat` is the per-phase density, `velocity` scales the
+           *   envelope (the working pulse uses a lower value), `pitch` transposes the
+           *   note by octaves, and `phase` resets the carry when the streamed phase
+           *   changes so a reasoning remainder cannot sound in the answer.
            * @returns {boolean} whether a note was scheduled
            */
-          note(sessionId, characters, velocity = 1) {
+          note(sessionId, characters, options = {}) {
             const voice = this.voices.get(sessionId);
             if (voice === undefined || voice.paused || voice.stopping) return false;
             if (this.chain === null || this.bus.audio === null) return false;
             if (!Number.isFinite(characters) || characters <= 0) return false;
+            const perBeat = Number.isFinite(options.charactersPerBeat)
+              ? Math.min(8, Math.max(1, Math.round(options.charactersPerBeat)))
+              : TOKENS_PER_BEAT;
+            const phase = typeof options.phase === "string" ? options.phase : "answer";
+            if (this.carryPhase.get(sessionId) !== phase) {
+              this.carry.set(sessionId, 0);
+              this.carryPhase.set(sessionId, phase);
+            }
             const carry = (this.carry.get(sessionId) ?? 0) + characters;
-            const beats = Math.floor(carry / TOKENS_PER_BEAT);
+            const beats = Math.floor(carry / perBeat);
             if (beats <= 0) {
               this.carry.set(sessionId, carry);
               return false;
             }
-            this.carry.set(sessionId, carry % TOKENS_PER_BEAT);
+            this.carry.set(sessionId, carry % perBeat);
             const now = this.clock();
             if (now - (this.lastBeat.get(sessionId) ?? -Infinity) < MIN_BEAT_INTERVAL_MS) return false;
             this.lastBeat.set(sessionId, now);
-            return this.#playNote(velocity);
+            return this.#playNote(options.velocity ?? 1, options.pitch ?? "normal");
+          }
+
+          /**
+           * Play one pulse note, bypassing the character carry.
+           *
+           * Used for the tool/idle phase, where there is no text to count. The same
+           * per-session voice and throttle apply, so a pulse can never double up with a
+           * text beat.
+           */
+          pulse(sessionId, options = {}) {
+            const voice = this.voices.get(sessionId);
+            if (voice === undefined || voice.paused || voice.stopping) return false;
+            if (this.chain === null || this.bus.audio === null) return false;
+            const now = this.clock();
+            if (now - (this.lastBeat.get(sessionId) ?? -Infinity) < MIN_BEAT_INTERVAL_MS) return false;
+            this.lastBeat.set(sessionId, now);
+            return this.#playNote(options.velocity ?? 1, options.pitch ?? "normal");
           }
 
           /**
@@ -1149,7 +1243,7 @@ window.__ModuleLoader__.load({
           }
 
           /** Schedule one note on the shared chain; `velocity` scales the envelope. */
-          #playNote(velocity = 1) {
+          #playNote(velocity = 1, pitch = "normal") {
             const chain = this.chain;
             if (chain === null) return false;
             let context;
@@ -1160,6 +1254,7 @@ window.__ModuleLoader__.load({
             }
             const config = chain.config;
             const level = Number.isFinite(velocity) ? Math.min(1, Math.max(0, velocity)) : 1;
+            const pitchShift = pitch === "low" ? 0.5 : pitch === "high" ? 2 : 1;
             const useLow = this.random() < LOW_OCTAVE_CHANCE;
             const scale = useLow ? OCTAVE_FREQS : SCALE_FREQS;
             const freq = scale[Math.floor(this.random() * scale.length)] ?? SCALE_FREQS[0];
@@ -1169,7 +1264,7 @@ window.__ModuleLoader__.load({
             try {
               const osc = context.createOscillator();
               osc.type = config.oscillatorType;
-              osc.frequency.setValueAtTime(freq * detune, start);
+              osc.frequency.setValueAtTime(freq * detune * pitchShift, start);
 
               const envelope = context.createGain();
               const gain = envelope.gain;
@@ -1367,11 +1462,22 @@ window.__ModuleLoader__.load({
           return attributeOf(root, "data-chat-flow-kind") === "assistant-step";
         }
 
+        /**
+         * Which phase one assistant-step root belongs to.
+         *
+         * The thinking half carries `data-chat-group-part="reasoning"`; everything else
+         * that streams as an assistant step is answer prose. The phase travels with the
+         * characters so each one can have its own density, pitch, and on/off switch.
+         */
+        function phaseOf(root) {
+          return attributeOf(root, "data-chat-group-part") === "reasoning" ? "thinking" : "answer";
+        }
+
         /** Reads the rendered transcript and reports the characters that appeared. */
         class ChatTextObserver {
           /**
            * @param {object} options
-           * @param {(characters: string[]) => void} options.onCharacters
+           * @param {(characters: string[], phase: "thinking" | "answer") => void} options.onCharacters
            * @param {(root: Element) => boolean} [options.shouldTrackRoot]
            * @param {Document} [options.document]
            * @param {typeof MutationObserver} [options.MutationObserver]
@@ -1458,7 +1564,8 @@ window.__ModuleLoader__.load({
             if (this.pending === 0) return;
             this.pending = 0;
             if (this.targets.size === 0) return;
-            const characters = [];
+            /** @type {{thinking: string[], answer: string[]}} */
+            const characters = { thinking: [], answer: [] };
             for (const root of this.targets) {
               const { text, count, kept } = readFlow(root);
               const head = text.slice(0, TEXT_HEAD);
@@ -1483,11 +1590,13 @@ window.__ModuleLoader__.load({
               // A block that landed in one flush, on a root that never typed before, was
               // mounted; so was anything this large even on a root that has been typing.
               if (delta > (previous.grows === 0 ? FIRST_GROWTH_MAX : MOUNT_JUMP)) continue;
-              characters.push(...kept.slice(Math.max(0, kept.length - Math.min(delta, MAX_DELTA))));
+              characters[phaseOf(root)].push(...kept.slice(Math.max(0, kept.length - Math.min(delta, MAX_DELTA))));
             }
             this.targets.clear();
             if (this.seen.size > MAX_TRACKED) this.#prune();
-            if (characters.length > 0) this.onCharacters(characters);
+            for (const [phase, chars] of Object.entries(characters)) {
+              if (chars.length > 0) this.onCharacters(chars, phase);
+            }
           }
 
           /** Drop wrappers the transcript no longer holds, so a long session stays bounded. */
@@ -1506,6 +1615,7 @@ window.__ModuleLoader__.load({
           MAX_TRACKED,
           TEXT_HEAD,
           isAnswerRoot,
+          phaseOf,
           flowRootOf,
           readFlow,
           ChatTextObserver,
@@ -1533,7 +1643,7 @@ window.__ModuleLoader__.load({
          *    never rings it.
          */
 
-        const { shouldPlayAttentionChimeForEvent } = settings;
+        const { shouldPlayAttentionChimeForEvent, TOOL_PULSE_INTERVALS } = settings;
         const { TOKENS_PER_BEAT } = presets;
 
         /** The completion chime waits this long, so a two-step turn never rings twice. */
@@ -1550,13 +1660,12 @@ window.__ModuleLoader__.load({
          *
          * Reasoning streams token by token and drives notes on its own; tool execution
          * and long pauses do not produce text at all. Once the current answer has been
-         * quiet for {@link WORKING_PULSE_IDLE_MS}, a soft note every
-         * {@link WORKING_PULSE_INTERVAL_MS} keeps "still working" audible — the same
-         * idea as the non-current ambience, at the current-session volume and a lower
-         * velocity so it reads as a pulse rather than another token.
+         * quiet for {@link WORKING_PULSE_IDLE_MS}, a soft note at the speed selected by
+         * the `toolSound` setting keeps "still working" audible — the same idea as the
+         * non-current ambience, at the current-session volume and a lower velocity so
+         * it reads as a pulse rather than another token.
          */
         const WORKING_PULSE_IDLE_MS = 1200;
-        const WORKING_PULSE_INTERVAL_MS = 900;
         /** Velocity of a working pulse relative to a text-driven beat. */
         const WORKING_PULSE_VELOCITY = 0.55;
 
@@ -1767,15 +1876,30 @@ window.__ModuleLoader__.load({
             for (const [id, state] of this.states) this.#syncVoice(id, state);
           }
 
-          /** Characters that appeared in the current conversation; drives its beats. */
-          onCurrentCharacters(characters) {
+          /**
+           * Characters that appeared in the current conversation; drives its beats.
+           *
+           * The observer labels each delta with its phase. Thinking and answer prose
+           * each have their own density, pitch, and on/off switch; a muted phase still
+           * counts as activity, so the tool/idle pulse does not fill a stream the user
+           * deliberately silenced.
+           */
+          onCurrentCharacters(characters, phase = "answer") {
             if (this.disposed || characters.length === 0) return;
             const id = this.getCurrentId();
             if (id === undefined) return;
             const state = this.states.get(id);
             if (state === undefined || !state.running || state.pending) return;
             this.lastCurrentActivity = this.clock();
-            this.engine.note(id, characters.length);
+            const settingsValue = this.getSettings();
+            const thinking = phase === "thinking";
+            const audible = thinking ? settingsValue.thinkingSound : settingsValue.answerSound;
+            if (!audible) return;
+            this.engine.note(id, characters.length, {
+              charactersPerBeat: thinking ? settingsValue.thinkingDensity : settingsValue.answerDensity,
+              pitch: thinking ? settingsValue.thinkingPitch : settingsValue.answerPitch,
+              phase,
+            });
           }
 
           /** Start the ambience scheduler; `setInterval` is cleared by `dispose`. */
@@ -1873,11 +1997,15 @@ window.__ModuleLoader__.load({
                 continue;
               }
               if (id === current) {
+                // `toolSound` is the phase's own switch: `off` removes the speed, which
+                // silences the pulse entirely.
+                const interval = TOOL_PULSE_INTERVALS[this.getSettings().toolSound];
+                if (interval === undefined) continue;
                 if (now - this.lastCurrentActivity < WORKING_PULSE_IDLE_MS) continue;
                 const lastPulse = this.lastWorkingPulse.get(id);
-                if (lastPulse !== undefined && now - lastPulse < WORKING_PULSE_INTERVAL_MS) continue;
+                if (lastPulse !== undefined && now - lastPulse < interval) continue;
                 this.lastWorkingPulse.set(id, now);
-                this.engine.note(id, TOKENS_PER_BEAT, WORKING_PULSE_VELOCITY);
+                this.engine.pulse(id, { velocity: WORKING_PULSE_VELOCITY });
                 continue;
               }
               const last = this.lastPulse.get(id);
@@ -1899,7 +2027,6 @@ window.__ModuleLoader__.load({
           OTHER_SESSION_PULSE_SPREAD_MS,
           PULSE_TICK_MS,
           WORKING_PULSE_IDLE_MS,
-          WORKING_PULSE_INTERVAL_MS,
           WORKING_PULSE_VELOCITY,
           pendingIdentity,
           stableSignature,
@@ -1936,6 +2063,7 @@ window.__ModuleLoader__.load({
         const {
           SettingsStore,
           SOUND_PREF_IDS,
+          DENSITY_VALUES,
           VOLUME_MIN,
           VOLUME_MAX,
           VOLUME_STEP,
@@ -1994,6 +2122,18 @@ window.__ModuleLoader__.load({
         .dcs-slider:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,currentColor);outline-offset:3px}
         .dcs-value{min-width:40px;font-size:12px;text-align:right;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary,inherit)}
         .dcs-note{margin-top:2px;font-size:11px;line-height:1.45;color:var(--dsw-alias-label-secondary,inherit);opacity:.75}
+        .dcs-stack{display:flex;flex-direction:column;gap:12px;width:100%;max-width:720px}
+        .dcs-stack .dcs-card{max-width:none}
+        .dcs-phase-row{display:flex;align-items:center;gap:10px;min-height:30px;flex-wrap:wrap}
+        .dcs-phase-row .dcs-label{flex:1;min-width:64px}
+        .dcs-phase-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+        .dcs-select--compact{min-width:88px}
+        .dcs-select:disabled{opacity:.45;cursor:default}
+        .dcs-switch{position:relative;flex:none;width:34px;height:20px;padding:0;border:0.5px solid var(--dsw-alias-border-l2,rgba(127,127,127,.35));border-radius:999px;background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.2));cursor:pointer;transition:background .15s ease}
+        .dcs-switch::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-bg-base,#fff);transition:transform .15s ease}
+        .dcs-switch[aria-checked="true"]{background:var(--dsw-alias-brand-primary,#2f6feb);border-color:transparent}
+        .dcs-switch[aria-checked="true"]::after{transform:translateX(14px)}
+        .dcs-switch:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,currentColor);outline-offset:2px}
         @media (prefers-reduced-motion: no-preference){.dcs-toggle svg{transition:transform .12s ease}}
         `;
 
@@ -2027,6 +2167,21 @@ window.__ModuleLoader__.load({
           otherVolume: "其他会话音量",
           otherVolumeHint: "其他会话仍在后台工作时使用的音量",
           noAudio: "这个浏览器不支持 Web Audio，声音无法播放。",
+          phaseTitle: "阶段声音",
+          phaseHint: "思考 / 回答 / 工具执行，可分别关闭与调整",
+          phaseThinking: "思考",
+          phaseAnswer: "回答正文",
+          phaseTool: "工具执行",
+          charsPerBeat: "字/拍",
+          density: "密度",
+          pitch: "音高",
+          pitchLow: "低",
+          pitchNormal: "标准",
+          pitchHigh: "高",
+          toolPulse: "脉冲",
+          speedSlow: "慢",
+          speedNormal: "标准",
+          speedFast: "快",
         });
 
         const en = Object.freeze({
@@ -2058,6 +2213,21 @@ window.__ModuleLoader__.load({
           otherVolume: "Other sessions volume",
           otherVolumeHint: "Volume used by sessions still working in the background",
           noAudio: "This browser has no Web Audio; sound cannot play.",
+          phaseTitle: "Phase sounds",
+          phaseHint: "Thinking / answer / tool execution — each can be tuned or muted",
+          phaseThinking: "Thinking",
+          phaseAnswer: "Answer",
+          phaseTool: "Tool execution",
+          charsPerBeat: "chars/beat",
+          density: "density",
+          pitch: "pitch",
+          pitchLow: "Low",
+          pitchNormal: "Normal",
+          pitchHigh: "High",
+          toolPulse: "pulse",
+          speedSlow: "Slow",
+          speedNormal: "Normal",
+          speedFast: "Fast",
         });
 
         /** Insert the plugin stylesheet once; removed by the plugin's disposer. */
@@ -2185,6 +2355,45 @@ window.__ModuleLoader__.load({
           );
         }
 
+        /** A bare select without the audition button (phase settings). */
+        function SelectBox(options) {
+          const { label, value, choices, onChange, disabled } = options;
+          return h(
+            "select",
+            {
+              className: "dcs-select dcs-select--compact",
+              value,
+              "aria-label": label,
+              disabled: disabled === true,
+              onChange: (event) => onChange(event.target.value),
+            },
+            choices.map((choice) => h("option", { key: choice.value, value: choice.value }, choice.label)),
+          );
+        }
+
+        /** The host-style on/off switch used by the phase rows. */
+        function SwitchControl(options) {
+          const { label, checked, onChange } = options;
+          return h("button", {
+            type: "button",
+            role: "switch",
+            className: "dcs-switch",
+            "aria-checked": checked === true,
+            "aria-label": label,
+            onClick: () => onChange(checked !== true),
+          });
+        }
+
+        /** One phase row: label, on/off switch, then the phase's own controls. */
+        function phaseRow(label, enabled, onToggle, controls) {
+          return h(
+            "div",
+            { className: "dcs-phase-row" },
+            h("span", { className: "dcs-label" }, label),
+            h("span", { className: "dcs-phase-controls" }, h(SwitchControl, { label, checked: enabled, onChange: onToggle }), ...controls),
+          );
+        }
+
         /**
          * Build the Settings section component.
          *
@@ -2226,6 +2435,75 @@ window.__ModuleLoader__.load({
             const current = snapshot.settings;
             const expanded = snapshot.expanded;
             const status = summarizeSoundStatus(current.musicPreset, current.successSound, current.attentionSound, current.notifyVolume);
+            const densityChoices = DENSITY_VALUES.map((value) => ({ value: String(value), label: `${value} ${t("charsPerBeat")}` }));
+            const pitchChoices = [
+              { value: "low", label: t("pitchLow") },
+              { value: "normal", label: t("pitchNormal") },
+              { value: "high", label: t("pitchHigh") },
+            ];
+            const toolSpeedChoices = [
+              { value: "slow", label: t("speedSlow") },
+              { value: "normal", label: t("speedNormal") },
+              { value: "fast", label: t("speedFast") },
+            ];
+
+            // The per-phase card: thinking and answer are token-driven and each has its
+            // own density/pitch; tool execution has no text, so it only has a pulse speed.
+            const phaseCard = h(
+              "div",
+              { className: "dcs-card" },
+              h(
+                "div",
+                { className: "dcs-head" },
+                h("span", { className: "dcs-icon", "aria-hidden": true }, speakerIcon()),
+                h("span", { className: "dcs-titles" }, h("span", { className: "dcs-title" }, t("phaseTitle")), h("span", { className: "dcs-hint" }, t("phaseHint"))),
+              ),
+              h(
+                "div",
+                { className: "dcs-list" },
+                phaseRow(t("phaseThinking"), current.thinkingSound, (on) => store.set({ thinkingSound: on }), [
+                  h(SelectBox, {
+                    label: `${t("phaseThinking")} ${t("density")}`,
+                    value: String(current.thinkingDensity),
+                    choices: densityChoices,
+                    disabled: !current.thinkingSound,
+                    onChange: (value) => store.set({ thinkingDensity: Number(value) }),
+                  }),
+                  h(SelectBox, {
+                    label: `${t("phaseThinking")} ${t("pitch")}`,
+                    value: current.thinkingPitch,
+                    choices: pitchChoices,
+                    disabled: !current.thinkingSound,
+                    onChange: (value) => store.set({ thinkingPitch: value }),
+                  }),
+                ]),
+                phaseRow(t("phaseAnswer"), current.answerSound, (on) => store.set({ answerSound: on }), [
+                  h(SelectBox, {
+                    label: `${t("phaseAnswer")} ${t("density")}`,
+                    value: String(current.answerDensity),
+                    choices: densityChoices,
+                    disabled: !current.answerSound,
+                    onChange: (value) => store.set({ answerDensity: Number(value) }),
+                  }),
+                  h(SelectBox, {
+                    label: `${t("phaseAnswer")} ${t("pitch")}`,
+                    value: current.answerPitch,
+                    choices: pitchChoices,
+                    disabled: !current.answerSound,
+                    onChange: (value) => store.set({ answerPitch: value }),
+                  }),
+                ]),
+                phaseRow(t("phaseTool"), current.toolSound !== "off", (on) => store.set({ toolSound: on ? "normal" : "off" }), [
+                  h(SelectBox, {
+                    label: `${t("phaseTool")} ${t("toolPulse")}`,
+                    value: current.toolSound === "off" ? "normal" : current.toolSound,
+                    choices: toolSpeedChoices,
+                    disabled: current.toolSound === "off",
+                    onChange: (value) => store.set({ toolSound: value }),
+                  }),
+                ]),
+              ),
+            );
 
             const head = h(
               "div",
@@ -2248,15 +2526,9 @@ window.__ModuleLoader__.load({
               ),
             );
 
-            if (!expanded) return h("div", { className: "dcs-card" }, head);
-
-            return h(
+            const list = h(
               "div",
-              { className: "dcs-card" },
-              head,
-              h(
-                "div",
-                { className: "dcs-list", id: PANEL_ID },
+              { className: "dcs-list", id: PANEL_ID },
                 row(
                   t("music"),
                   h(SelectControl, {
@@ -2328,8 +2600,9 @@ window.__ModuleLoader__.load({
                   t("otherVolumeHint"),
                 ),
                 audioAvailable ? null : h("div", { className: "dcs-note", role: "note" }, t("noAudio")),
-              ),
             );
+            const mainCard = h("div", { className: "dcs-card" }, head, expanded ? list : null);
+            return h("div", { className: "dcs-stack" }, mainCard, phaseCard);
           };
         }
 
@@ -2395,7 +2668,7 @@ window.__ModuleLoader__.load({
             isSubagent,
           });
           const observer = new ChatTextObserver({
-            onCharacters: (characters) => voices.onCurrentCharacters(characters),
+            onCharacters: (characters, phase) => voices.onCurrentCharacters(characters, phase),
           });
 
           music.setPreset(store.get().musicPreset);

@@ -226,6 +226,33 @@ test("defaults and normalization are hardened", () => {
   assert.equal(settings.normalizeSettings({ musicVolumeCurrent: 120 }).musicVolumeCurrent, 100);
 });
 
+test("per-phase defaults, clamping, and merging", () => {
+  assert.equal(settings.DEFAULTS.thinkingSound, true);
+  assert.equal(settings.DEFAULTS.thinkingDensity, 2);
+  assert.equal(settings.DEFAULTS.thinkingPitch, "normal");
+  assert.equal(settings.DEFAULTS.answerSound, true);
+  assert.equal(settings.DEFAULTS.answerDensity, 4);
+  assert.equal(settings.DEFAULTS.answerPitch, "normal");
+  assert.equal(settings.DEFAULTS.toolSound, "normal");
+  assert.deepEqual([...settings.DENSITY_VALUES], [1, 2, 3, 4, 6, 8]);
+  assert.deepEqual([...settings.PITCH_IDS], ["low", "normal", "high"]);
+  assert.deepEqual([...settings.TOOL_SPEED_IDS], ["off", "slow", "normal", "fast"]);
+
+  assert.equal(settings.normalizeSettings({ thinkingSound: false }).thinkingSound, false);
+  assert.equal(settings.normalizeSettings({ thinkingDensity: 0 }).thinkingDensity, 1);
+  assert.equal(settings.normalizeSettings({ thinkingDensity: 99 }).thinkingDensity, 8);
+  assert.equal(settings.normalizeSettings({ answerDensity: "3.6" }).answerDensity, 4);
+  assert.equal(settings.normalizeSettings({ thinkingPitch: "ultra" }).thinkingPitch, "normal");
+  assert.equal(settings.normalizeSettings({ answerPitch: "high" }).answerPitch, "high");
+  assert.equal(settings.normalizeSettings({ toolSound: "off" }).toolSound, "off");
+  assert.equal(settings.normalizeSettings({ toolSound: "warp" }).toolSound, "normal");
+  assert.equal(settings.normalizeSettings({ thinkingSound: "yes" }).thinkingSound, true);
+
+  const merged = settings.resolveSettings({ thinkingDensity: 6 }, { thinkingDensity: 1 });
+  assert.equal(merged.thinkingDensity, 1);
+  assert.equal(merged.answerDensity, 4);
+});
+
 test("browser-local settings win over Host defaults, field by field", () => {
   const host = { musicPreset: "retro", notifyVolume: 40, successSound: "positive" };
   const resolved = settings.resolveSettings(host, { notifyVolume: 90 });
@@ -425,8 +452,12 @@ function fakeEngine() {
     setVolume(id, volume) {
       this.calls.push(["volume", id, volume]);
     },
-    note(id, characters, velocity) {
-      this.calls.push(["note", id, characters, velocity]);
+    note(id, characters, options) {
+      this.calls.push(["note", id, characters, options]);
+      return true;
+    },
+    pulse(id, options) {
+      this.calls.push(["pulse", id, options]);
       return true;
     },
   };
@@ -451,7 +482,7 @@ function buildVoices(overrides = {}) {
   const voices = new sessions.SessionVoices({
     engine,
     chimes,
-    getSettings: () => settings.DEFAULTS,
+    getSettings: () => overrides.settings ?? settings.DEFAULTS,
     getCurrentId: () => current,
     isSubagent: overrides.isSubagent ?? (() => false),
     clock: overrides.clock ?? (() => 0),
@@ -538,32 +569,31 @@ test("a quiet working pulse keeps the current session audible during tools and p
   let now = 0;
   const { engine, voices } = buildVoices({ clock: () => now });
   voices.apply(new Map([["a", { running: true }]]));
-  const notes = () => engine.calls.filter((call) => call[0] === "note");
-  assert.equal(notes().length, 0, "no pulse while a turn is just starting");
+  const pulses = () => engine.calls.filter((call) => call[0] === "pulse");
+  assert.equal(pulses().length, 0, "no pulse while a turn is just starting");
 
   now = sessions.WORKING_PULSE_IDLE_MS - 200;
   voices.tick();
-  assert.equal(notes().length, 0, "the idle window still holds");
+  assert.equal(pulses().length, 0, "the idle window still holds");
 
   now = sessions.WORKING_PULSE_IDLE_MS + 100;
   voices.tick();
-  assert.deepEqual(notes(), [["note", "a", presets.TOKENS_PER_BEAT, sessions.WORKING_PULSE_VELOCITY]]);
+  assert.deepEqual(pulses(), [["pulse", "a", { velocity: sessions.WORKING_PULSE_VELOCITY }]]);
 
-  now += sessions.WORKING_PULSE_INTERVAL_MS - 100;
+  now += settings.TOOL_PULSE_INTERVALS.normal - 100;
   voices.tick();
-  assert.equal(notes().length, 1, "the pulse interval is respected");
+  assert.equal(pulses().length, 1, "the pulse interval is respected");
 
   now += 200;
   voices.tick();
-  assert.equal(notes().length, 2);
+  assert.equal(pulses().length, 2);
 
   // A token beat resets the idle window, so a pulse never doubles up on text.
-  voices.onCurrentCharacters("abcd");
-  const afterText = notes().length;
-  assert.equal(afterText, 3, "the text beat itself is scheduled");
+  voices.onCurrentCharacters("abcd", "answer");
+  assert.equal(engine.calls.filter((call) => call[0] === "note").length, 1, "the text beat itself is scheduled");
   now += 100;
   voices.tick();
-  assert.equal(notes().length, afterText, "no pulse right after a text beat");
+  assert.equal(pulses().length, 2, "no pulse right after a text beat");
 });
 
 test("a waiting session never pulses", () => {
@@ -573,7 +603,60 @@ test("a waiting session never pulses", () => {
   voices.apply(new Map([["a", { running: true, pendingInteraction: { kind: "approval", id: "p1", turnId: "t1" } }]]));
   now = sessions.WORKING_PULSE_IDLE_MS + 500;
   voices.tick();
-  assert.equal(engine.calls.filter((call) => call[0] === "note").length, 0);
+  assert.equal(engine.calls.filter((call) => call[0] === "pulse").length, 0);
+});
+
+test("each phase uses its own density, pitch, and switch", () => {
+  const { engine, voices } = buildVoices();
+  voices.apply(new Map([["a", { running: true }]]));
+
+  voices.onCurrentCharacters("ab", "thinking");
+  voices.onCurrentCharacters("abcd", "answer");
+  const notes = engine.calls.filter((call) => call[0] === "note");
+  assert.equal(notes.length, 2);
+  assert.deepEqual(notes[0][3], { charactersPerBeat: settings.DEFAULTS.thinkingDensity, pitch: "normal", phase: "thinking" });
+  assert.deepEqual(notes[1][3], { charactersPerBeat: settings.DEFAULTS.answerDensity, pitch: "normal", phase: "answer" });
+
+  const muted = buildVoices({
+    settings: { ...settings.DEFAULTS, thinkingSound: false, answerSound: false, toolSound: "off" },
+  });
+  muted.voices.apply(new Map([["a", { running: true }]]));
+  muted.voices.onCurrentCharacters("abcdefgh", "thinking");
+  muted.voices.onCurrentCharacters("abcdefgh", "answer");
+  assert.equal(muted.engine.calls.filter((call) => call[0] === "note").length, 0);
+  // Muted text still counts as activity, so the pulse does not take over.
+  let now = 0;
+  const clocked = buildVoices({
+    clock: () => now,
+    settings: { ...settings.DEFAULTS, thinkingSound: false, toolSound: "normal" },
+  });
+  clocked.voices.apply(new Map([["a", { running: true }]]));
+  now = 5000;
+  clocked.voices.onCurrentCharacters("abcdefgh", "thinking");
+  clocked.voices.tick();
+  assert.equal(clocked.engine.calls.filter((call) => call[0] === "pulse").length, 0);
+});
+
+test("the tool phase can be silenced or sped up", () => {
+  let now = 0;
+  const off = buildVoices({ clock: () => now, settings: { ...settings.DEFAULTS, toolSound: "off" } });
+  off.voices.apply(new Map([["a", { running: true }]]));
+  now = sessions.WORKING_PULSE_IDLE_MS + 2000;
+  off.voices.tick();
+  assert.equal(off.engine.calls.filter((call) => call[0] === "pulse").length, 0);
+
+  now = 0;
+  const fast = buildVoices({ clock: () => now, settings: { ...settings.DEFAULTS, toolSound: "fast" } });
+  fast.voices.apply(new Map([["a", { running: true }]]));
+  now = sessions.WORKING_PULSE_IDLE_MS + 100;
+  fast.voices.tick();
+  assert.equal(fast.engine.calls.filter((call) => call[0] === "pulse").length, 1);
+  now += settings.TOOL_PULSE_INTERVALS.fast - 100;
+  fast.voices.tick();
+  assert.equal(fast.engine.calls.filter((call) => call[0] === "pulse").length, 1, "fast still respects 550 ms");
+  now += 200;
+  fast.voices.tick();
+  assert.equal(fast.engine.calls.filter((call) => call[0] === "pulse").length, 2);
 });
 
 // ---------------------------------------------------------------------------
@@ -607,6 +690,8 @@ test("thinking text is tracked as well as answer prose", () => {
   assert.equal(observer.isAnswerRoot(thinking), true);
   assert.equal(observer.isAnswerRoot(prose), true);
   assert.equal(observer.isAnswerRoot(tool), false);
+  assert.equal(observer.phaseOf(thinking), "thinking");
+  assert.equal(observer.phaseOf(prose), "answer");
 });
 
 test("the observer baselines mounted text and reports typed deltas only", () => {
@@ -882,15 +967,19 @@ test("the built client module applies cleanly against a fake runtime", () => {
     };
     const SoundSection = runtime.registrations[0].component;
     const first = SoundSection({});
-    assert.equal(first.props.className, "dcs-card");
+    assert.equal(first.props.className, "dcs-stack");
     assert.equal(collect(first, (node) => node.props?.className === "dcs-row").length, 6);
-    assert.equal(collect(first, (node) => node.type === "select").length, 3);
+    assert.equal(collect(first, (node) => node.props?.className === "dcs-phase-row").length, 3);
+    assert.equal(collect(first, (node) => node.type === "select").length, 8);
+    assert.equal(collect(first, (node) => node.props?.role === "switch").length, 3);
     assert.equal(collect(first, (node) => node.props?.className === "dcs-preview").length, 3);
     assert.ok(collect(first, (node) => node.props?.className?.includes("dcs-badge--custom")).length === 1);
 
-    // Selecting "off" everywhere hides each preview button and flips the badge.
-    const selects = collect(first, (node) => node.type === "select");
-    for (const select of selects) select.props.onChange({ target: { value: "off" } });
+    // Selecting "off" on the three main sound rows hides each preview button and
+    // flips the badge; the phase selectors are not part of that flow.
+    const mainSelects = collect(first, (node) => node.type === "select" && !String(node.props?.className).includes("--compact"));
+    assert.equal(mainSelects.length, 3);
+    for (const select of mainSelects) select.props.onChange({ target: { value: "off" } });
     const second = SoundSection({});
     assert.equal(collect(second, (node) => node.props?.className === "dcs-preview").length, 0);
     assert.ok(collect(second, (node) => node.props?.className?.includes("dcs-badge--allOff")).length === 1);

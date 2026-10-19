@@ -126,11 +126,22 @@ function isAnswerRoot(root) {
   return attributeOf(root, "data-chat-flow-kind") === "assistant-step";
 }
 
+/**
+ * Which phase one assistant-step root belongs to.
+ *
+ * The thinking half carries `data-chat-group-part="reasoning"`; everything else
+ * that streams as an assistant step is answer prose. The phase travels with the
+ * characters so each one can have its own density, pitch, and on/off switch.
+ */
+function phaseOf(root) {
+  return attributeOf(root, "data-chat-group-part") === "reasoning" ? "thinking" : "answer";
+}
+
 /** Reads the rendered transcript and reports the characters that appeared. */
 class ChatTextObserver {
   /**
    * @param {object} options
-   * @param {(characters: string[]) => void} options.onCharacters
+   * @param {(characters: string[], phase: "thinking" | "answer") => void} options.onCharacters
    * @param {(root: Element) => boolean} [options.shouldTrackRoot]
    * @param {Document} [options.document]
    * @param {typeof MutationObserver} [options.MutationObserver]
@@ -217,7 +228,8 @@ class ChatTextObserver {
     if (this.pending === 0) return;
     this.pending = 0;
     if (this.targets.size === 0) return;
-    const characters = [];
+    /** @type {{thinking: string[], answer: string[]}} */
+    const characters = { thinking: [], answer: [] };
     for (const root of this.targets) {
       const { text, count, kept } = readFlow(root);
       const head = text.slice(0, TEXT_HEAD);
@@ -242,11 +254,13 @@ class ChatTextObserver {
       // A block that landed in one flush, on a root that never typed before, was
       // mounted; so was anything this large even on a root that has been typing.
       if (delta > (previous.grows === 0 ? FIRST_GROWTH_MAX : MOUNT_JUMP)) continue;
-      characters.push(...kept.slice(Math.max(0, kept.length - Math.min(delta, MAX_DELTA))));
+      characters[phaseOf(root)].push(...kept.slice(Math.max(0, kept.length - Math.min(delta, MAX_DELTA))));
     }
     this.targets.clear();
     if (this.seen.size > MAX_TRACKED) this.#prune();
-    if (characters.length > 0) this.onCharacters(characters);
+    for (const [phase, chars] of Object.entries(characters)) {
+      if (chars.length > 0) this.onCharacters(chars, phase);
+    }
   }
 
   /** Drop wrappers the transcript no longer holds, so a long session stays bounded. */
@@ -265,6 +279,7 @@ module.exports = {
   MAX_TRACKED,
   TEXT_HEAD,
   isAnswerRoot,
+  phaseOf,
   flowRootOf,
   readFlow,
   ChatTextObserver,

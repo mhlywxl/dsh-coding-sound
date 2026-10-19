@@ -21,6 +21,7 @@ const { useState, useEffect, useReducer, useCallback, useRef } = React;
 const {
   SettingsStore,
   SOUND_PREF_IDS,
+  DENSITY_VALUES,
   VOLUME_MIN,
   VOLUME_MAX,
   VOLUME_STEP,
@@ -79,6 +80,18 @@ const CSS = `
 .dcs-slider:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,currentColor);outline-offset:3px}
 .dcs-value{min-width:40px;font-size:12px;text-align:right;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary,inherit)}
 .dcs-note{margin-top:2px;font-size:11px;line-height:1.45;color:var(--dsw-alias-label-secondary,inherit);opacity:.75}
+.dcs-stack{display:flex;flex-direction:column;gap:12px;width:100%;max-width:720px}
+.dcs-stack .dcs-card{max-width:none}
+.dcs-phase-row{display:flex;align-items:center;gap:10px;min-height:30px;flex-wrap:wrap}
+.dcs-phase-row .dcs-label{flex:1;min-width:64px}
+.dcs-phase-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.dcs-select--compact{min-width:88px}
+.dcs-select:disabled{opacity:.45;cursor:default}
+.dcs-switch{position:relative;flex:none;width:34px;height:20px;padding:0;border:0.5px solid var(--dsw-alias-border-l2,rgba(127,127,127,.35));border-radius:999px;background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.2));cursor:pointer;transition:background .15s ease}
+.dcs-switch::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-bg-base,#fff);transition:transform .15s ease}
+.dcs-switch[aria-checked="true"]{background:var(--dsw-alias-brand-primary,#2f6feb);border-color:transparent}
+.dcs-switch[aria-checked="true"]::after{transform:translateX(14px)}
+.dcs-switch:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,currentColor);outline-offset:2px}
 @media (prefers-reduced-motion: no-preference){.dcs-toggle svg{transition:transform .12s ease}}
 `;
 
@@ -112,6 +125,21 @@ const zh = Object.freeze({
   otherVolume: "其他会话音量",
   otherVolumeHint: "其他会话仍在后台工作时使用的音量",
   noAudio: "这个浏览器不支持 Web Audio，声音无法播放。",
+  phaseTitle: "阶段声音",
+  phaseHint: "思考 / 回答 / 工具执行，可分别关闭与调整",
+  phaseThinking: "思考",
+  phaseAnswer: "回答正文",
+  phaseTool: "工具执行",
+  charsPerBeat: "字/拍",
+  density: "密度",
+  pitch: "音高",
+  pitchLow: "低",
+  pitchNormal: "标准",
+  pitchHigh: "高",
+  toolPulse: "脉冲",
+  speedSlow: "慢",
+  speedNormal: "标准",
+  speedFast: "快",
 });
 
 const en = Object.freeze({
@@ -143,6 +171,21 @@ const en = Object.freeze({
   otherVolume: "Other sessions volume",
   otherVolumeHint: "Volume used by sessions still working in the background",
   noAudio: "This browser has no Web Audio; sound cannot play.",
+  phaseTitle: "Phase sounds",
+  phaseHint: "Thinking / answer / tool execution — each can be tuned or muted",
+  phaseThinking: "Thinking",
+  phaseAnswer: "Answer",
+  phaseTool: "Tool execution",
+  charsPerBeat: "chars/beat",
+  density: "density",
+  pitch: "pitch",
+  pitchLow: "Low",
+  pitchNormal: "Normal",
+  pitchHigh: "High",
+  toolPulse: "pulse",
+  speedSlow: "Slow",
+  speedNormal: "Normal",
+  speedFast: "Fast",
 });
 
 /** Insert the plugin stylesheet once; removed by the plugin's disposer. */
@@ -270,6 +313,45 @@ function row(label, control, hint) {
   );
 }
 
+/** A bare select without the audition button (phase settings). */
+function SelectBox(options) {
+  const { label, value, choices, onChange, disabled } = options;
+  return h(
+    "select",
+    {
+      className: "dcs-select dcs-select--compact",
+      value,
+      "aria-label": label,
+      disabled: disabled === true,
+      onChange: (event) => onChange(event.target.value),
+    },
+    choices.map((choice) => h("option", { key: choice.value, value: choice.value }, choice.label)),
+  );
+}
+
+/** The host-style on/off switch used by the phase rows. */
+function SwitchControl(options) {
+  const { label, checked, onChange } = options;
+  return h("button", {
+    type: "button",
+    role: "switch",
+    className: "dcs-switch",
+    "aria-checked": checked === true,
+    "aria-label": label,
+    onClick: () => onChange(checked !== true),
+  });
+}
+
+/** One phase row: label, on/off switch, then the phase's own controls. */
+function phaseRow(label, enabled, onToggle, controls) {
+  return h(
+    "div",
+    { className: "dcs-phase-row" },
+    h("span", { className: "dcs-label" }, label),
+    h("span", { className: "dcs-phase-controls" }, h(SwitchControl, { label, checked: enabled, onChange: onToggle }), ...controls),
+  );
+}
+
 /**
  * Build the Settings section component.
  *
@@ -311,6 +393,75 @@ function createSoundSection(deps) {
     const current = snapshot.settings;
     const expanded = snapshot.expanded;
     const status = summarizeSoundStatus(current.musicPreset, current.successSound, current.attentionSound, current.notifyVolume);
+    const densityChoices = DENSITY_VALUES.map((value) => ({ value: String(value), label: `${value} ${t("charsPerBeat")}` }));
+    const pitchChoices = [
+      { value: "low", label: t("pitchLow") },
+      { value: "normal", label: t("pitchNormal") },
+      { value: "high", label: t("pitchHigh") },
+    ];
+    const toolSpeedChoices = [
+      { value: "slow", label: t("speedSlow") },
+      { value: "normal", label: t("speedNormal") },
+      { value: "fast", label: t("speedFast") },
+    ];
+
+    // The per-phase card: thinking and answer are token-driven and each has its
+    // own density/pitch; tool execution has no text, so it only has a pulse speed.
+    const phaseCard = h(
+      "div",
+      { className: "dcs-card" },
+      h(
+        "div",
+        { className: "dcs-head" },
+        h("span", { className: "dcs-icon", "aria-hidden": true }, speakerIcon()),
+        h("span", { className: "dcs-titles" }, h("span", { className: "dcs-title" }, t("phaseTitle")), h("span", { className: "dcs-hint" }, t("phaseHint"))),
+      ),
+      h(
+        "div",
+        { className: "dcs-list" },
+        phaseRow(t("phaseThinking"), current.thinkingSound, (on) => store.set({ thinkingSound: on }), [
+          h(SelectBox, {
+            label: `${t("phaseThinking")} ${t("density")}`,
+            value: String(current.thinkingDensity),
+            choices: densityChoices,
+            disabled: !current.thinkingSound,
+            onChange: (value) => store.set({ thinkingDensity: Number(value) }),
+          }),
+          h(SelectBox, {
+            label: `${t("phaseThinking")} ${t("pitch")}`,
+            value: current.thinkingPitch,
+            choices: pitchChoices,
+            disabled: !current.thinkingSound,
+            onChange: (value) => store.set({ thinkingPitch: value }),
+          }),
+        ]),
+        phaseRow(t("phaseAnswer"), current.answerSound, (on) => store.set({ answerSound: on }), [
+          h(SelectBox, {
+            label: `${t("phaseAnswer")} ${t("density")}`,
+            value: String(current.answerDensity),
+            choices: densityChoices,
+            disabled: !current.answerSound,
+            onChange: (value) => store.set({ answerDensity: Number(value) }),
+          }),
+          h(SelectBox, {
+            label: `${t("phaseAnswer")} ${t("pitch")}`,
+            value: current.answerPitch,
+            choices: pitchChoices,
+            disabled: !current.answerSound,
+            onChange: (value) => store.set({ answerPitch: value }),
+          }),
+        ]),
+        phaseRow(t("phaseTool"), current.toolSound !== "off", (on) => store.set({ toolSound: on ? "normal" : "off" }), [
+          h(SelectBox, {
+            label: `${t("phaseTool")} ${t("toolPulse")}`,
+            value: current.toolSound === "off" ? "normal" : current.toolSound,
+            choices: toolSpeedChoices,
+            disabled: current.toolSound === "off",
+            onChange: (value) => store.set({ toolSound: value }),
+          }),
+        ]),
+      ),
+    );
 
     const head = h(
       "div",
@@ -333,15 +484,9 @@ function createSoundSection(deps) {
       ),
     );
 
-    if (!expanded) return h("div", { className: "dcs-card" }, head);
-
-    return h(
+    const list = h(
       "div",
-      { className: "dcs-card" },
-      head,
-      h(
-        "div",
-        { className: "dcs-list", id: PANEL_ID },
+      { className: "dcs-list", id: PANEL_ID },
         row(
           t("music"),
           h(SelectControl, {
@@ -413,8 +558,9 @@ function createSoundSection(deps) {
           t("otherVolumeHint"),
         ),
         audioAvailable ? null : h("div", { className: "dcs-note", role: "note" }, t("noAudio")),
-      ),
     );
+    const mainCard = h("div", { className: "dcs-card" }, head, expanded ? list : null);
+    return h("div", { className: "dcs-stack" }, mainCard, phaseCard);
   };
 }
 
@@ -480,7 +626,7 @@ function apply(ctx) {
     isSubagent,
   });
   const observer = new ChatTextObserver({
-    onCharacters: (characters) => voices.onCurrentCharacters(characters),
+    onCharacters: (characters, phase) => voices.onCurrentCharacters(characters, phase),
   });
 
   music.setPreset(store.get().musicPreset);
