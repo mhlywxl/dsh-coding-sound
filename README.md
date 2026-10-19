@@ -24,6 +24,8 @@ DeepSeek Harness（DSH）声音插件：模型输出时演奏**生成式背景�
 |---|---|
 | 某个会话开始输出 | 该会话的音乐淡入（0.25 s）；每 4 个字一拍，两拍至少间隔 100 ms，C 大调五声音阶随机取音，15% 概率低八度，±5% 随机 detune |
 | 输出中 | 节拍跟随真实字符增量，不是固定循环；整段挂载/重渲染/换会话不会被误当打字 |
+| 思考（reasoning） | **当前会话不发声音符**：观察器只统计助手正文，reasoning 段被排除；非当前会话的环境脉冲照常 |
+| 工具执行 | **当前会话不发声音符**：工具行不是正文；若本轮有正文（如“我先看一下…”）则照常发声。等待审批时该会话音乐暂停并响「等待操作」 |
 | 某个会话进入等待操作 | **只**停这个会话的音乐（0.25 s 淡出），并响「等待操作」；其他会话照常 |
 | 一轮结束 | 当前会话 320 ms 防抖后响「生成完成」；子代理会话不响 |
 | 切会话 | 当前会话按「当前会话音量」、其他会话按「其他会话音量」，0.25 s 交叉过渡 |
@@ -94,6 +96,46 @@ node test.mjs           # 27 项离线测试，含把生成后的 client.js 在�
 ```
 
 Host 半改动（`index.js`）需要重启 DSH 才能生效；只改 `src/` 时重新 `node build.mjs` 并**刷新页面**（Client 产物按启动时的模块图加载，刷新才会取到新文件）。
+
+## 离线安装 / 另一台电脑 / macOS
+
+插件没有原生依赖、没有安装脚本，`client.js` 已预构建；Host 半只是一个空的 Loader 行，全部功能都在浏览器里（Web Audio + React）。因此：
+
+- **macOS 可用**：代码里没有 Windows 专属路径或原生模块，DSH 的 Web/Electron 页面在 macOS 上跑的是同一套 JS。未在 macOS 实机验证过，但不存在平台相关分支。
+- **运行时不需要网络**：没有远程素材、没有 fetch、没有第三方依赖。
+- **离线安装步骤**（目标机不需要联网）：
+
+  1. 在源机打包（`npm pack` 不需要联网，只打包发布文件）：
+
+     ```powershell
+     cd D:\dev\harness\dsh-coding-sound
+     npm pack
+     # 得到 dsh-coding-sound-0.1.0.tgz
+     ```
+
+     也可以直接拷贝整个目录（排除 `.git/` 和 `node_modules/`）。
+
+  2. 把 tgz（或目录）拷到目标机，例如 `/Users/you/Downloads/dsh-coding-sound-0.1.0.tgz`。
+
+  3. 在目标机安装（`dsh` 不在 PATH 时，用 DSH app 内自带的 `runtime/cli/bin/dsh`）：
+
+     ```bash
+     dsh plugin --profile desktop add /Users/you/Downloads/dsh-coding-sound-0.1.0.tgz
+     # 目录方式：dsh plugin --profile desktop add link:/Users/you/dsh-coding-sound
+     ```
+
+     目标机完全离线、pnpm 仍尝试访问 registry 时，在命令末尾加 `--offline`。
+
+  4. **启用 bundle**：`dsh plugin add` 只把包装进 profile，不会自动加载。到
+     **设置 → 插件** 里启用 `dsh-coding-sound`（等价于把 `"dsh-coding-sound"`
+     加进 `~/.dsh/profiles/desktop/package.json` 的 `dsh.profile.bundles` 数组）。
+
+  5. 完全退出并重启 DSH，打开 **设置 → 声音**。
+
+  也可以在目标机的 **Plugin Manager** 里直接安装这个目录或 tgz——它会同时完成第 3、4 步。
+
+- 设置保存在浏览器 `localStorage`（键 `dsh:coding-sound:v1`），新电脑从默认值开始：空灵 / 合成音效 / 70% / 当前 100% / 其他 35%。不需要迁移配置文件。
+- 如果目标机用 Safari 打开 Web GUI，首次需要点一下页面（用户手势）才能出声，这是浏览器自动播放策略，插件已经处理恢复。
 
 ## 发布
 
