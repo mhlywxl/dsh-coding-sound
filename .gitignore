@@ -4,3 +4,4 @@ test-out*.txt
 .tmp/
 .DS_Store
 Thumbs.db
+.idea
