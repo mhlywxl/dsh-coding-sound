@@ -27,7 +27,7 @@ cd D:\dev\harness\dsh-coding-sound
 
 ```powershell
 node build.mjs --check   # client.js 必须与 src/ 一致
-node test.mjs            # 27 项离线测试
+node test.mjs            # 33 项离线测试
 npm pack --dry-run       # 看最终会进入 npm 包的文件列表
 ```
 

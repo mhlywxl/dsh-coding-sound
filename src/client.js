@@ -22,6 +22,7 @@ const {
   SettingsStore,
   SOUND_PREF_IDS,
   DENSITY_VALUES,
+  TOOL_PULSE_INTERVALS,
   VOLUME_MIN,
   VOLUME_MAX,
   VOLUME_STEP,
@@ -46,6 +47,8 @@ const SECTION_ID = "coding-sound";
 const SECTION_ORDER = 35;
 /** How long a 试听 button stays disabled after a click (no stacked previews). */
 const PREVIEW_LOCK_MS = 700;
+/** A phase audition is a phrase, not a single chime: keep it from stacking. */
+const PHASE_PREVIEW_LOCK_MS = 1800;
 /** The card's panel id, referenced by `aria-controls`. */
 const PANEL_ID = "coding-sound-panel";
 
@@ -92,6 +95,12 @@ const CSS = `
 .dcs-switch[aria-checked="true"]{background:var(--dsw-alias-brand-primary,#2f6feb);border-color:transparent}
 .dcs-switch[aria-checked="true"]::after{transform:translateX(14px)}
 .dcs-switch:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,currentColor);outline-offset:2px}
+.dcs-nav{display:inline-flex;align-items:center;gap:6px;min-width:0;color:inherit}
+.dcs-nav-icon{display:inline-flex;flex:none;align-items:center}
+.dcs-nav-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The shell's nav falls back to a gear for section ids it does not know; hide
+   that fallback only on the row carrying our own speaker label. */
+button:has(> span [data-coding-sound-nav])>svg{display:none}
 @media (prefers-reduced-motion: no-preference){.dcs-toggle svg{transition:transform .12s ease}}
 `;
 
@@ -360,7 +369,7 @@ function phaseRow(label, enabled, onToggle, controls) {
  * subscribes to the store with `useSyncExternalStore`.
  */
 function createSoundSection(deps) {
-  const { store, t, subscribeLocale, previewMusic, previewChime, audioAvailable } = deps;
+  const { store, t, subscribeLocale, previewMusic, previewChime, previewPhase, audioAvailable } = deps;
 
   return function SoundSection() {
     const snapshot = useStoreSnapshot(store);
@@ -379,13 +388,13 @@ function createSoundSection(deps) {
       [],
     );
 
-    const lock = (key, action) => {
+    const lock = (key, action, duration = PREVIEW_LOCK_MS) => {
       if (busy[key] === true) return;
       setBusy((previous) => ({ ...previous, [key]: true }));
       const timer = setTimeout(() => {
         timers.current.delete(timer);
         setBusy((previous) => ({ ...previous, [key]: false }));
-      }, PREVIEW_LOCK_MS);
+      }, duration);
       timers.current.add(timer);
       action();
     };
@@ -404,6 +413,19 @@ function createSoundSection(deps) {
       { value: "normal", label: t("speedNormal") },
       { value: "fast", label: t("speedFast") },
     ];
+    const phasePreview = (phase, enabled, label) =>
+      h(
+        "button",
+        {
+          type: "button",
+          className: "dcs-preview",
+          title: t("preview"),
+          "aria-label": `${label} ${t("preview")}`,
+          disabled: !enabled || busy[`phase:${phase}`] === true,
+          onClick: () => lock(`phase:${phase}`, () => previewPhase(phase), PHASE_PREVIEW_LOCK_MS),
+        },
+        playIcon(),
+      );
 
     // The per-phase card: thinking and answer are token-driven and each has its
     // own density/pitch; tool execution has no text, so it only has a pulse speed.
@@ -434,6 +456,7 @@ function createSoundSection(deps) {
             disabled: !current.thinkingSound,
             onChange: (value) => store.set({ thinkingPitch: value }),
           }),
+          phasePreview("thinking", current.thinkingSound, t("phaseThinking")),
         ]),
         phaseRow(t("phaseAnswer"), current.answerSound, (on) => store.set({ answerSound: on }), [
           h(SelectBox, {
@@ -450,6 +473,7 @@ function createSoundSection(deps) {
             disabled: !current.answerSound,
             onChange: (value) => store.set({ answerPitch: value }),
           }),
+          phasePreview("answer", current.answerSound, t("phaseAnswer")),
         ]),
         phaseRow(t("phaseTool"), current.toolSound !== "off", (on) => store.set({ toolSound: on ? "normal" : "off" }), [
           h(SelectBox, {
@@ -459,6 +483,7 @@ function createSoundSection(deps) {
             disabled: current.toolSound === "off",
             onChange: (value) => store.set({ toolSound: value }),
           }),
+          phasePreview("tool", current.toolSound !== "off", t("phaseTool")),
         ]),
       ),
     );
@@ -680,13 +705,44 @@ function apply(ctx) {
       void bus.resume();
       void player.play(kind, store.get());
     },
+    previewPhase: (phase) => {
+      const settingsValue = store.get();
+      void bus.resume();
+      if (phase === "thinking") {
+        if (!settingsValue.thinkingSound) return;
+        music.previewPhrase({ pitch: settingsValue.thinkingPitch, intervalMs: 60 + settingsValue.thinkingDensity * 30, count: 4 });
+        return;
+      }
+      if (phase === "answer") {
+        if (!settingsValue.answerSound) return;
+        music.previewPhrase({ pitch: settingsValue.answerPitch, intervalMs: 60 + settingsValue.answerDensity * 30, count: 4 });
+        return;
+      }
+      const interval = TOOL_PULSE_INTERVALS[settingsValue.toolSound];
+      if (interval === undefined) return;
+      music.previewPhrase({ count: 3, intervalMs: interval, velocity: 0.55, pitch: "normal" });
+    },
   });
 
   ctx.effect(
     () =>
       ctx.slots.inject("settings.section", () =>
         ctx.slots.register(
-          { name: "settings.section", id: SECTION_ID, order: SECTION_ORDER, label: () => t("nav") },
+          {
+            name: "settings.section",
+            id: SECTION_ID,
+            order: SECTION_ORDER,
+            // The host maps nav icons by section id and falls back to a gear for
+            // unknown ids, so the speaker glyph travels inside the label here and
+            // the stylesheet hides that fallback gear for this row only.
+            label: () =>
+              h(
+                "span",
+                { className: "dcs-nav", "data-coding-sound-nav": "" },
+                h("span", { className: "dcs-nav-icon", "aria-hidden": true }, speakerIcon()),
+                h("span", { className: "dcs-nav-text" }, t("nav")),
+              ),
+          },
           SoundSection,
         ),
       ),

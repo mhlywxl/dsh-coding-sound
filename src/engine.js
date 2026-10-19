@@ -326,57 +326,47 @@ class MusicEngine {
     }
     void this.bus.resume();
     try {
-      const master = context.createGain();
-      master.gain.value = config.masterVolume * 2;
-      master.connect(context.destination);
-
-      const filter = context.createBiquadFilter();
-      filter.type = "lowpass";
-      filter.frequency.value = config.filterFreq;
-      filter.Q.value = 1;
-      filter.connect(master);
-
-      const reverb = context.createConvolver();
-      reverb.buffer = this.#impulse(config.reverbDecay);
-      const wet = context.createGain();
-      wet.gain.value = config.reverbWet;
-      filter.connect(reverb);
-      reverb.connect(wet);
-      wet.connect(master);
-
+      const chain = this.#buildAuditionChain(context, config);
       const notes = [SCALE_FREQS[0], SCALE_FREQS[2], SCALE_FREQS[4], SCALE_FREQS[6]];
       const base = context.currentTime + 0.01;
-      notes.forEach((freq, index) => {
-        const start = base + index * 0.05;
-        const noteEnd = start + config.attack + config.decay + config.release + 0.05;
+      notes.forEach((freq, index) => this.#auditionNote(context, chain.filter, config, freq, base + index * 0.05, 1));
+      this.#after(3000, () => this.#disposeAuditionChain(chain));
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
-        const osc = context.createOscillator();
-        osc.type = config.oscillatorType;
-        osc.frequency.setValueAtTime(freq, start);
-
-        const envelope = context.createGain();
-        const gain = envelope.gain;
-        gain.setValueAtTime(0, start);
-        gain.linearRampToValueAtTime(1, start + config.attack);
-        gain.linearRampToValueAtTime(config.sustain, start + config.attack + config.decay);
-        gain.setValueAtTime(config.sustain, start + 0.05);
-        gain.linearRampToValueAtTime(0.001, start + config.attack + config.decay + config.release);
-
-        osc.connect(envelope);
-        envelope.connect(filter);
-        osc.start(start);
-        osc.stop(noteEnd);
-      });
-
-      this.#after(3000, () => {
-        for (const node of [filter, reverb, wet, master]) {
-          try {
-            node.disconnect();
-          } catch {
-            /* already disconnected */
-          }
-        }
-      });
+  /**
+   * Audition one phase: a short ascending phrase with that phase's pitch,
+   * velocity and pacing, on the current preset's timbre. It works with no
+   * running session and while the music preset is `off` (the default preset is
+   * used then), so a phase can be heard before it ever plays live.
+   *
+   * @param {{count?: number, intervalMs?: number, velocity?: number, pitch?: "low"|"normal"|"high"}} [options]
+   */
+  previewPhrase(options = {}) {
+    const config = presetConfig(this.preset) ?? presetConfig(DEFAULT_PRESET);
+    let context;
+    try {
+      context = this.bus.context();
+    } catch {
+      return false;
+    }
+    void this.bus.resume();
+    const count = Number.isFinite(options.count) ? Math.min(8, Math.max(1, Math.round(options.count))) : 4;
+    const intervalMs = Number.isFinite(options.intervalMs) ? Math.min(600, Math.max(40, Math.round(options.intervalMs))) : 160;
+    const velocity = Number.isFinite(options.velocity) ? Math.min(1, Math.max(0, options.velocity)) : 1;
+    const shift = options.pitch === "low" ? 0.5 : options.pitch === "high" ? 2 : 1;
+    try {
+      const chain = this.#buildAuditionChain(context, config);
+      const scale = [SCALE_FREQS[0], SCALE_FREQS[2], SCALE_FREQS[4], SCALE_FREQS[6], SCALE_FREQS[1], SCALE_FREQS[3], SCALE_FREQS[5]];
+      const base = context.currentTime + 0.01;
+      for (let index = 0; index < count; index += 1) {
+        const freq = (scale[index % scale.length] ?? SCALE_FREQS[0]) * shift;
+        this.#auditionNote(context, chain.filter, config, freq, base + (index * intervalMs) / 1000, velocity);
+      }
+      this.#after(count * intervalMs + 1400, () => this.#disposeAuditionChain(chain));
       return true;
     } catch {
       return false;
@@ -468,6 +458,59 @@ class MusicEngine {
         /* already disconnected */
       }
     }
+  }
+
+  /** A detached audition chain: same timbre as the live one, twice as loud. */
+  #buildAuditionChain(context, config) {
+    const master = context.createGain();
+    master.gain.value = config.masterVolume * 2;
+    master.connect(context.destination);
+
+    const filter = context.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = config.filterFreq;
+    filter.Q.value = 1;
+    filter.connect(master);
+
+    const reverb = context.createConvolver();
+    reverb.buffer = this.#impulse(config.reverbDecay);
+    const wet = context.createGain();
+    wet.gain.value = config.reverbWet;
+    filter.connect(reverb);
+    reverb.connect(wet);
+    wet.connect(master);
+    return { master, filter, reverb, wet };
+  }
+
+  #disposeAuditionChain(chain) {
+    for (const node of [chain.filter, chain.reverb, chain.wet, chain.master]) {
+      try {
+        node.disconnect();
+      } catch {
+        /* already disconnected */
+      }
+    }
+  }
+
+  /** One audition note; the envelope is the reference preview's, scaled by velocity. */
+  #auditionNote(context, destination, config, freq, start, velocity) {
+    const level = Math.min(1, Math.max(0, velocity));
+    const osc = context.createOscillator();
+    osc.type = config.oscillatorType;
+    osc.frequency.setValueAtTime(freq, start);
+
+    const envelope = context.createGain();
+    const gain = envelope.gain;
+    gain.setValueAtTime(0, start);
+    gain.linearRampToValueAtTime(level, start + config.attack);
+    gain.linearRampToValueAtTime(config.sustain * level, start + config.attack + config.decay);
+    gain.setValueAtTime(config.sustain * level, start + 0.05);
+    gain.linearRampToValueAtTime(0.001, start + config.attack + config.decay + config.release);
+
+    osc.connect(envelope);
+    envelope.connect(destination);
+    osc.start(start);
+    osc.stop(start + config.attack + config.decay + config.release + 0.05);
   }
 
   /** Schedule one note on the shared chain; `velocity` scales the envelope. */

@@ -1098,57 +1098,47 @@ window.__ModuleLoader__.load({
             }
             void this.bus.resume();
             try {
-              const master = context.createGain();
-              master.gain.value = config.masterVolume * 2;
-              master.connect(context.destination);
-
-              const filter = context.createBiquadFilter();
-              filter.type = "lowpass";
-              filter.frequency.value = config.filterFreq;
-              filter.Q.value = 1;
-              filter.connect(master);
-
-              const reverb = context.createConvolver();
-              reverb.buffer = this.#impulse(config.reverbDecay);
-              const wet = context.createGain();
-              wet.gain.value = config.reverbWet;
-              filter.connect(reverb);
-              reverb.connect(wet);
-              wet.connect(master);
-
+              const chain = this.#buildAuditionChain(context, config);
               const notes = [SCALE_FREQS[0], SCALE_FREQS[2], SCALE_FREQS[4], SCALE_FREQS[6]];
               const base = context.currentTime + 0.01;
-              notes.forEach((freq, index) => {
-                const start = base + index * 0.05;
-                const noteEnd = start + config.attack + config.decay + config.release + 0.05;
+              notes.forEach((freq, index) => this.#auditionNote(context, chain.filter, config, freq, base + index * 0.05, 1));
+              this.#after(3000, () => this.#disposeAuditionChain(chain));
+              return true;
+            } catch {
+              return false;
+            }
+          }
 
-                const osc = context.createOscillator();
-                osc.type = config.oscillatorType;
-                osc.frequency.setValueAtTime(freq, start);
-
-                const envelope = context.createGain();
-                const gain = envelope.gain;
-                gain.setValueAtTime(0, start);
-                gain.linearRampToValueAtTime(1, start + config.attack);
-                gain.linearRampToValueAtTime(config.sustain, start + config.attack + config.decay);
-                gain.setValueAtTime(config.sustain, start + 0.05);
-                gain.linearRampToValueAtTime(0.001, start + config.attack + config.decay + config.release);
-
-                osc.connect(envelope);
-                envelope.connect(filter);
-                osc.start(start);
-                osc.stop(noteEnd);
-              });
-
-              this.#after(3000, () => {
-                for (const node of [filter, reverb, wet, master]) {
-                  try {
-                    node.disconnect();
-                  } catch {
-                    /* already disconnected */
-                  }
-                }
-              });
+          /**
+           * Audition one phase: a short ascending phrase with that phase's pitch,
+           * velocity and pacing, on the current preset's timbre. It works with no
+           * running session and while the music preset is `off` (the default preset is
+           * used then), so a phase can be heard before it ever plays live.
+           *
+           * @param {{count?: number, intervalMs?: number, velocity?: number, pitch?: "low"|"normal"|"high"}} [options]
+           */
+          previewPhrase(options = {}) {
+            const config = presetConfig(this.preset) ?? presetConfig(DEFAULT_PRESET);
+            let context;
+            try {
+              context = this.bus.context();
+            } catch {
+              return false;
+            }
+            void this.bus.resume();
+            const count = Number.isFinite(options.count) ? Math.min(8, Math.max(1, Math.round(options.count))) : 4;
+            const intervalMs = Number.isFinite(options.intervalMs) ? Math.min(600, Math.max(40, Math.round(options.intervalMs))) : 160;
+            const velocity = Number.isFinite(options.velocity) ? Math.min(1, Math.max(0, options.velocity)) : 1;
+            const shift = options.pitch === "low" ? 0.5 : options.pitch === "high" ? 2 : 1;
+            try {
+              const chain = this.#buildAuditionChain(context, config);
+              const scale = [SCALE_FREQS[0], SCALE_FREQS[2], SCALE_FREQS[4], SCALE_FREQS[6], SCALE_FREQS[1], SCALE_FREQS[3], SCALE_FREQS[5]];
+              const base = context.currentTime + 0.01;
+              for (let index = 0; index < count; index += 1) {
+                const freq = (scale[index % scale.length] ?? SCALE_FREQS[0]) * shift;
+                this.#auditionNote(context, chain.filter, config, freq, base + (index * intervalMs) / 1000, velocity);
+              }
+              this.#after(count * intervalMs + 1400, () => this.#disposeAuditionChain(chain));
               return true;
             } catch {
               return false;
@@ -1240,6 +1230,59 @@ window.__ModuleLoader__.load({
                 /* already disconnected */
               }
             }
+          }
+
+          /** A detached audition chain: same timbre as the live one, twice as loud. */
+          #buildAuditionChain(context, config) {
+            const master = context.createGain();
+            master.gain.value = config.masterVolume * 2;
+            master.connect(context.destination);
+
+            const filter = context.createBiquadFilter();
+            filter.type = "lowpass";
+            filter.frequency.value = config.filterFreq;
+            filter.Q.value = 1;
+            filter.connect(master);
+
+            const reverb = context.createConvolver();
+            reverb.buffer = this.#impulse(config.reverbDecay);
+            const wet = context.createGain();
+            wet.gain.value = config.reverbWet;
+            filter.connect(reverb);
+            reverb.connect(wet);
+            wet.connect(master);
+            return { master, filter, reverb, wet };
+          }
+
+          #disposeAuditionChain(chain) {
+            for (const node of [chain.filter, chain.reverb, chain.wet, chain.master]) {
+              try {
+                node.disconnect();
+              } catch {
+                /* already disconnected */
+              }
+            }
+          }
+
+          /** One audition note; the envelope is the reference preview's, scaled by velocity. */
+          #auditionNote(context, destination, config, freq, start, velocity) {
+            const level = Math.min(1, Math.max(0, velocity));
+            const osc = context.createOscillator();
+            osc.type = config.oscillatorType;
+            osc.frequency.setValueAtTime(freq, start);
+
+            const envelope = context.createGain();
+            const gain = envelope.gain;
+            gain.setValueAtTime(0, start);
+            gain.linearRampToValueAtTime(level, start + config.attack);
+            gain.linearRampToValueAtTime(config.sustain * level, start + config.attack + config.decay);
+            gain.setValueAtTime(config.sustain * level, start + 0.05);
+            gain.linearRampToValueAtTime(0.001, start + config.attack + config.decay + config.release);
+
+            osc.connect(envelope);
+            envelope.connect(destination);
+            osc.start(start);
+            osc.stop(start + config.attack + config.decay + config.release + 0.05);
           }
 
           /** Schedule one note on the shared chain; `velocity` scales the envelope. */
@@ -2064,6 +2107,7 @@ window.__ModuleLoader__.load({
           SettingsStore,
           SOUND_PREF_IDS,
           DENSITY_VALUES,
+          TOOL_PULSE_INTERVALS,
           VOLUME_MIN,
           VOLUME_MAX,
           VOLUME_STEP,
@@ -2088,6 +2132,8 @@ window.__ModuleLoader__.load({
         const SECTION_ORDER = 35;
         /** How long a 试听 button stays disabled after a click (no stacked previews). */
         const PREVIEW_LOCK_MS = 700;
+        /** A phase audition is a phrase, not a single chime: keep it from stacking. */
+        const PHASE_PREVIEW_LOCK_MS = 1800;
         /** The card's panel id, referenced by `aria-controls`. */
         const PANEL_ID = "coding-sound-panel";
 
@@ -2134,6 +2180,12 @@ window.__ModuleLoader__.load({
         .dcs-switch[aria-checked="true"]{background:var(--dsw-alias-brand-primary,#2f6feb);border-color:transparent}
         .dcs-switch[aria-checked="true"]::after{transform:translateX(14px)}
         .dcs-switch:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,currentColor);outline-offset:2px}
+        .dcs-nav{display:inline-flex;align-items:center;gap:6px;min-width:0;color:inherit}
+        .dcs-nav-icon{display:inline-flex;flex:none;align-items:center}
+        .dcs-nav-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        /* The shell's nav falls back to a gear for section ids it does not know; hide
+           that fallback only on the row carrying our own speaker label. */
+        button:has(> span [data-coding-sound-nav])>svg{display:none}
         @media (prefers-reduced-motion: no-preference){.dcs-toggle svg{transition:transform .12s ease}}
         `;
 
@@ -2402,7 +2454,7 @@ window.__ModuleLoader__.load({
          * subscribes to the store with `useSyncExternalStore`.
          */
         function createSoundSection(deps) {
-          const { store, t, subscribeLocale, previewMusic, previewChime, audioAvailable } = deps;
+          const { store, t, subscribeLocale, previewMusic, previewChime, previewPhase, audioAvailable } = deps;
 
           return function SoundSection() {
             const snapshot = useStoreSnapshot(store);
@@ -2421,13 +2473,13 @@ window.__ModuleLoader__.load({
               [],
             );
 
-            const lock = (key, action) => {
+            const lock = (key, action, duration = PREVIEW_LOCK_MS) => {
               if (busy[key] === true) return;
               setBusy((previous) => ({ ...previous, [key]: true }));
               const timer = setTimeout(() => {
                 timers.current.delete(timer);
                 setBusy((previous) => ({ ...previous, [key]: false }));
-              }, PREVIEW_LOCK_MS);
+              }, duration);
               timers.current.add(timer);
               action();
             };
@@ -2446,6 +2498,19 @@ window.__ModuleLoader__.load({
               { value: "normal", label: t("speedNormal") },
               { value: "fast", label: t("speedFast") },
             ];
+            const phasePreview = (phase, enabled, label) =>
+              h(
+                "button",
+                {
+                  type: "button",
+                  className: "dcs-preview",
+                  title: t("preview"),
+                  "aria-label": `${label} ${t("preview")}`,
+                  disabled: !enabled || busy[`phase:${phase}`] === true,
+                  onClick: () => lock(`phase:${phase}`, () => previewPhase(phase), PHASE_PREVIEW_LOCK_MS),
+                },
+                playIcon(),
+              );
 
             // The per-phase card: thinking and answer are token-driven and each has its
             // own density/pitch; tool execution has no text, so it only has a pulse speed.
@@ -2476,6 +2541,7 @@ window.__ModuleLoader__.load({
                     disabled: !current.thinkingSound,
                     onChange: (value) => store.set({ thinkingPitch: value }),
                   }),
+                  phasePreview("thinking", current.thinkingSound, t("phaseThinking")),
                 ]),
                 phaseRow(t("phaseAnswer"), current.answerSound, (on) => store.set({ answerSound: on }), [
                   h(SelectBox, {
@@ -2492,6 +2558,7 @@ window.__ModuleLoader__.load({
                     disabled: !current.answerSound,
                     onChange: (value) => store.set({ answerPitch: value }),
                   }),
+                  phasePreview("answer", current.answerSound, t("phaseAnswer")),
                 ]),
                 phaseRow(t("phaseTool"), current.toolSound !== "off", (on) => store.set({ toolSound: on ? "normal" : "off" }), [
                   h(SelectBox, {
@@ -2501,6 +2568,7 @@ window.__ModuleLoader__.load({
                     disabled: current.toolSound === "off",
                     onChange: (value) => store.set({ toolSound: value }),
                   }),
+                  phasePreview("tool", current.toolSound !== "off", t("phaseTool")),
                 ]),
               ),
             );
@@ -2722,13 +2790,44 @@ window.__ModuleLoader__.load({
               void bus.resume();
               void player.play(kind, store.get());
             },
+            previewPhase: (phase) => {
+              const settingsValue = store.get();
+              void bus.resume();
+              if (phase === "thinking") {
+                if (!settingsValue.thinkingSound) return;
+                music.previewPhrase({ pitch: settingsValue.thinkingPitch, intervalMs: 60 + settingsValue.thinkingDensity * 30, count: 4 });
+                return;
+              }
+              if (phase === "answer") {
+                if (!settingsValue.answerSound) return;
+                music.previewPhrase({ pitch: settingsValue.answerPitch, intervalMs: 60 + settingsValue.answerDensity * 30, count: 4 });
+                return;
+              }
+              const interval = TOOL_PULSE_INTERVALS[settingsValue.toolSound];
+              if (interval === undefined) return;
+              music.previewPhrase({ count: 3, intervalMs: interval, velocity: 0.55, pitch: "normal" });
+            },
           });
 
           ctx.effect(
             () =>
               ctx.slots.inject("settings.section", () =>
                 ctx.slots.register(
-                  { name: "settings.section", id: SECTION_ID, order: SECTION_ORDER, label: () => t("nav") },
+                  {
+                    name: "settings.section",
+                    id: SECTION_ID,
+                    order: SECTION_ORDER,
+                    // The host maps nav icons by section id and falls back to a gear for
+                    // unknown ids, so the speaker glyph travels inside the label here and
+                    // the stylesheet hides that fallback gear for this row only.
+                    label: () =>
+                      h(
+                        "span",
+                        { className: "dcs-nav", "data-coding-sound-nav": "" },
+                        h("span", { className: "dcs-nav-icon", "aria-hidden": true }, speakerIcon()),
+                        h("span", { className: "dcs-nav-text" }, t("nav")),
+                      ),
+                  },
                   SoundSection,
                 ),
               ),

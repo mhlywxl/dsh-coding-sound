@@ -966,22 +966,35 @@ test("the built client module applies cleanly against a fake runtime", () => {
       return found;
     };
     const SoundSection = runtime.registrations[0].component;
+    const registration = runtime.registrations[0].options;
+    const navLabel = registration.label();
+    assert.equal(navLabel.props.className, "dcs-nav");
+    assert.equal(navLabel.props["data-coding-sound-nav"], "");
     const first = SoundSection({});
     assert.equal(first.props.className, "dcs-stack");
     assert.equal(collect(first, (node) => node.props?.className === "dcs-row").length, 6);
     assert.equal(collect(first, (node) => node.props?.className === "dcs-phase-row").length, 3);
     assert.equal(collect(first, (node) => node.type === "select").length, 8);
     assert.equal(collect(first, (node) => node.props?.role === "switch").length, 3);
-    assert.equal(collect(first, (node) => node.props?.className === "dcs-preview").length, 3);
+    assert.equal(collect(first, (node) => node.props?.className === "dcs-preview").length, 6);
     assert.ok(collect(first, (node) => node.props?.className?.includes("dcs-badge--custom")).length === 1);
 
-    // Selecting "off" on the three main sound rows hides each preview button and
-    // flips the badge; the phase selectors are not part of that flow.
+    // Auditioning a phase works even before a session runs.
+    const thinkingPreview = collect(
+      first,
+      (node) => node.props?.className === "dcs-preview" && String(node.props?.["aria-label"]).includes("phaseThinking"),
+    );
+    assert.equal(thinkingPreview.length, 1);
+    thinkingPreview[0].props.onClick();
+    assert.equal(FakeAudioContext.instances.length, 1);
+
+    // Selecting "off" on the three main sound rows hides those preview buttons;
+    // the phase previews stay available.
     const mainSelects = collect(first, (node) => node.type === "select" && !String(node.props?.className).includes("--compact"));
     assert.equal(mainSelects.length, 3);
     for (const select of mainSelects) select.props.onChange({ target: { value: "off" } });
     const second = SoundSection({});
-    assert.equal(collect(second, (node) => node.props?.className === "dcs-preview").length, 0);
+    assert.equal(collect(second, (node) => node.props?.className === "dcs-preview").length, 3);
     assert.ok(collect(second, (node) => node.props?.className?.includes("dcs-badge--allOff")).length === 1);
 
     runtime.disposeAll();
