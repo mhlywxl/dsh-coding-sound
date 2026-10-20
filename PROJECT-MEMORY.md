@@ -39,7 +39,7 @@
 ## 发布流水线（CI）
 
 - `.github/workflows/test.yml`：任意 push / PR 跑 `node test.mjs` + `node build.mjs --check`。
-- `.github/workflows/release.yml`：push `main` 或手动 Run workflow，四个幂等 job：
+- `.github/workflows/release.yml`：手动 Run workflow（push 触发暂关，等 Secret 配好再恢复），四个幂等 job：
   `verify`（构建一致性 + 35 项测试 + `npm pack --dry-run`）→ `publish`（版本已在 registry 则跳过，
   `--provenance --access public`）→ `release`（建 `v<version>` tag 与 Release）→
   `catalog`（fork `awesome-dsh-plugin/awesome-dsh-plugin`，写 `data/plugins/<owner>__<repo>.yml`，开 PR）。
@@ -85,7 +85,7 @@
 ## 上线待办
 
 - 刷新桌面页面，确认导航扬声器图标与三行阶段试听。
-- 建 GitHub 仓库（Public）、补 `repository` / `homepage` / `bugs`、加 `dsh-plugin` topic。
-- 配 `NPM_TOKEN` 与 `MARKET_TOKEN` 两个 Secret，push `main` 触发 `release.yml`。
+- 建 GitHub 仓库（Public）、补 `repository` / `homepage` / `bugs`、加 `dsh-plugin` topic。（2026-10-20 已完成：`mhlywxl/dsh-coding-sound`）
+- 配 `NPM_TOKEN` 与 `MARKET_TOKEN` 两个 Secret，然后手动 Run workflow 触发 `release.yml`。
 - 仓库满 1 天后重跑 workflow 自动提市场 PR；合并后市场可见。
 - 可选：市场截图 `screenshots.json`（1–8 张图），以及 npm trusted publishing（可删掉 `NPM_TOKEN`）。

@@ -1,6 +1,10 @@
 name: release
 
-# Push to main: verify -> publish to npm -> GitHub Release -> plugin-market PR.
+# Manual run only for now: verify -> publish to npm -> GitHub Release -> plugin-market PR.
+#
+# The push trigger is intentionally off until the repository secrets
+# (NPM_TOKEN, MARKET_TOKEN) are configured; run it from Actions -> release ->
+# Run workflow or `gh workflow run release.yml`.
 #
 # Every step is idempotent, so re-running is always safe:
 #   * a version already on the registry is not published again,
@@ -9,11 +13,7 @@ name: release
 #   * a repository younger than 1 day defers the market PR instead of failing
 #     (the catalog rejects younger repositories), and a manual re-run after
 #     24 hours submits it.
-#
-# Manual run: Actions -> release -> Run workflow (or `gh workflow run release.yml`).
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:

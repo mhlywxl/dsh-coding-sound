@@ -6,6 +6,14 @@
   "icon": "./icon.svg",
   "license": "MIT",
   "author": "mhlywxl",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mhlywxl/dsh-coding-sound.git"
+  },
+  "homepage": "https://github.com/mhlywxl/dsh-coding-sound#readme",
+  "bugs": {
+    "url": "https://github.com/mhlywxl/dsh-coding-sound/issues"
+  },
   "keywords": [
     "dsh",
     "dsh-plugin",

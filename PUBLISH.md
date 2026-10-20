@@ -103,7 +103,8 @@ Initial release.
 
 ## 2. 发布到 npm
 
-> 常规流程：配好 `NPM_TOKEN` 后 push 到 `main`，`release.yml` 自动发布（带 provenance）。
+> 常规流程：配好 `NPM_TOKEN` 后在 Actions 里手动 Run workflow，`release.yml` 完成发布（带 provenance）。
+> 想恢复 push 到 `main` 自动发布，把 `release.yml` 的 `on:` 加回 `push: branches: [main]` 即可。
 > 本节是**手动兜底**——Actions 不可用、或需要立即补发时使用。
 
 ### 2.1 登录
@@ -225,11 +226,12 @@ CI 依次检查：条目数 → `dsh.bundle` → 仓库年龄 → awesome-lint /
 
 ---
 
-## 4. 版本迭代流程（推 main 自动发布）
+## 4. 版本迭代流程（手动触发发布）
 
-仓库带 `.github/workflows/release.yml`：push 到 `main` 时依次执行
-**测试 → npm 发布 → 建 tag/Release → 提插件市场 PR**。每一步幂等，重跑安全。
-首版发布前需要在 GitHub 上配好两个 Secret（见第 5 节）。
+仓库带 `.github/workflows/release.yml`：目前由 Actions → release → **Run workflow** 触发，
+依次执行 **测试 → npm 发布 → 建 tag/Release → 提插件市场 PR**。每一步幂等，重跑安全。
+首版发布前需要在 GitHub 上配好两个 Secret（见第 5 节）；配好并验证后，若想改回
+push 到 `main` 自动发布，恢复 `release.yml` 的 `push: branches: [main]` 触发即可。
 
 ```powershell
 # 1) 改代码并自检
@@ -239,10 +241,12 @@ node test.mjs
 # 2) 只升版本号（不要在本机打 tag：tag 由 CI 创建）
 npm version patch --no-git-tag-version
 
-# 3) 提交并推送，剩下的交给 Actions
+# 3) 提交并推送
 git add -A
 git commit -m "release: 0.1.1"
 git push origin main
+
+# 4) 到 Actions → release → Run workflow 手动发布
 ```
 
 - 不要在本机 `npm publish`，也不要在本机 `git tag v*` + `push --tags`；
@@ -269,7 +273,7 @@ git push origin main
 | 文件 | 触发 | 作用 |
 |---|---|---|
 | `.github/workflows/test.yml` | 任意 push / PR | `node test.mjs` + `node build.mjs --check` |
-| `.github/workflows/release.yml` | push 到 `main`、手动 Run workflow | 测试 → npm 发布（provenance）→ GitHub Release → 市场 PR |
+| `.github/workflows/release.yml` | 手动 Run workflow（Secret 配好后可恢复 push 到 `main`） | 测试 → npm 发布（provenance）→ GitHub Release → 市场 PR |
 
 发布工作流依赖两个仓库 Secret（Settings → Secrets and variables → Actions）：
 
@@ -316,7 +320,7 @@ git push origin main
 - [ ] `repository` / `homepage` / `bugs` 已填，且与 GitHub 仓库一致
 - [ ] GitHub 仓库是 Public，有 `dsh-plugin` topic，Description 准确
 - [ ] `NPM_TOKEN`、`MARKET_TOKEN` 两个 Secret 已配置
-- [ ] push `main` 后 `release` 全绿；npm 上能看到该版本
+- [ ] 手动 Run workflow 后 `release` 全绿；npm 上能看到该版本
 - [ ] 仓库满 1 天后重跑 workflow，`catalog` 给出市场 PR 链接
 - [ ] 合并后用干净 profile 安装验证；catalog PR 只新增一条自己的条目
 - [ ] Release / tag 与 npm 版本一致（由 CI 创建，不需要手工补）
