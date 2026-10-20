@@ -37,12 +37,44 @@ const PULSE_TICK_MS = 50;
  *
  * Reasoning streams token by token and drives notes on its own; tool execution
  * and long pauses do not produce text at all. Once the current answer has been
- * quiet for {@link WORKING_PULSE_IDLE_MS}, a note at the rate selected by the
- * `toolSound` setting keeps "still working" audible — the same idea as the
- * non-current ambience, at the current-session volume and, like a text beat, at
- * full velocity.
+ * quiet for {@link WORKING_PULSE_IDLE_MS}, a note around the pace selected by
+ * the `toolSound` setting — jittered like typing, not fixed like a metronome —
+ * keeps "still working" audible: the same idea as the non-current ambience, at
+ * the current-session volume and, like a text beat, at full velocity.
  */
 const WORKING_PULSE_IDLE_MS = 1200;
+
+/**
+ * The working pulse is not a metronome: the gap between two pulses is drawn
+ * around the pace chosen in `toolSound`, so the phase reads like typing. Most
+ * gaps stay within ±35% of the setting (triangular, peaking at the setting);
+ * about one gap in seven stretches into a short pause, like the carriage return
+ * between two lines.
+ */
+const TOOL_PULSE_JITTER = 0.35;
+const TOOL_PULSE_PAUSE_CHANCE = 0.15;
+const TOOL_PULSE_PAUSE_MIN = 1.6;
+const TOOL_PULSE_PAUSE_MAX = 2.4;
+/** Never schedule two pulses closer together than the fastest text beat. */
+const TOOL_PULSE_MIN_MS = 100;
+
+/**
+ * One gap between working pulses.
+ *
+ * @param {number} base configured pace in milliseconds
+ * @param {() => number} random uniform source in [0, 1)
+ */
+function toolPulseGap(base, random) {
+  const roll = random();
+  let factor;
+  if (roll > 1 - TOOL_PULSE_PAUSE_CHANCE) {
+    factor = TOOL_PULSE_PAUSE_MIN + random() * (TOOL_PULSE_PAUSE_MAX - TOOL_PULSE_PAUSE_MIN);
+  } else {
+    // Two uniform draws sum to a triangular distribution centred on the setting.
+    factor = 1 - TOOL_PULSE_JITTER + (random() + random()) * TOOL_PULSE_JITTER;
+  }
+  return Math.max(TOOL_PULSE_MIN_MS, Math.round(base * factor));
+}
 
 const APPROVAL_KINDS = new Set(["approval", "approval_request", "approval-request"]);
 const ASK_KINDS = new Set(["ask", "ask_request", "ask-request", "question", "user-question", "user_question"]);
@@ -175,8 +207,8 @@ class SessionVoices {
     this.lastPulse = new Map();
     /** Wall-clock time of the last text beat in the current conversation. */
     this.lastCurrentActivity = 0;
-    /** @type {Map<string, number>} last working pulse per session */
-    this.lastWorkingPulse = new Map();
+    /** @type {Map<string, number>} earliest time of the next working pulse per session */
+    this.nextWorkingPulse = new Map();
     /** @type {Map<string, ReturnType<typeof setTimeout>>} completion debounce timers */
     this.successTimers = new Map();
     this.pulseTimer = null;
@@ -209,14 +241,14 @@ class SessionVoices {
     for (const id of edges.stopped) {
       this.engine.stopVoice(id);
       this.lastPulse.delete(id);
-      this.lastWorkingPulse.delete(id);
+      this.nextWorkingPulse.delete(id);
       this.#scheduleSuccessChime(id);
     }
 
     for (const id of edges.pendingStarted) {
       this.engine.pauseVoice(id);
       this.lastPulse.delete(id);
-      this.lastWorkingPulse.delete(id);
+      this.nextWorkingPulse.delete(id);
       this.#ringAttentionChime(id);
     }
 
@@ -296,7 +328,7 @@ class SessionVoices {
     for (const timer of this.successTimers.values()) clearTimeout(timer);
     this.successTimers.clear();
     this.lastPulse.clear();
-    this.lastWorkingPulse.clear();
+    this.nextWorkingPulse.clear();
     this.seenAttention.clear();
     this.states.clear();
   }
@@ -368,7 +400,7 @@ class SessionVoices {
     for (const [id, state] of this.states) {
       if (!state.running || state.pending) {
         this.lastPulse.delete(id);
-        this.lastWorkingPulse.delete(id);
+        this.nextWorkingPulse.delete(id);
         continue;
       }
       if (id === current) {
@@ -379,9 +411,11 @@ class SessionVoices {
         const interval = TOOL_PULSE_INTERVALS[settingsValue.toolSound];
         if (interval === undefined) continue;
         if (now - this.lastCurrentActivity < WORKING_PULSE_IDLE_MS) continue;
-        const lastPulse = this.lastWorkingPulse.get(id);
-        if (lastPulse !== undefined && now - lastPulse < interval) continue;
-        this.lastWorkingPulse.set(id, now);
+        const due = this.nextWorkingPulse.get(id);
+        if (due !== undefined && now < due) continue;
+        // Draw the next gap now, so a pulse cannot drift with the tick cadence
+        // and every gap is sized from the current `toolSound` setting.
+        this.nextWorkingPulse.set(id, now + toolPulseGap(interval, this.random));
         this.engine.pulse(id, { pitch: settingsValue.toolPitch });
         continue;
       }
@@ -404,6 +438,7 @@ module.exports = {
   OTHER_SESSION_PULSE_SPREAD_MS,
   PULSE_TICK_MS,
   WORKING_PULSE_IDLE_MS,
+  toolPulseGap,
   pendingIdentity,
   stableSignature,
   normalizeEntry,

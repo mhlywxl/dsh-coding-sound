@@ -33,14 +33,14 @@
 - 对外定位（市场/README 用）：用声音盯住 Agent —— 不盯屏幕也能听出它在思考、仍在工作、还是在等你，从而减少「AI 在等人」、保持专注与效率
 - 版本：`0.1.0`；MIT；无第三方音频素材（全部 Web Audio 合成）
 - 安装：`dsh plugin --profile desktop add dsh-coding-sound`；本地开发用 `link:`
-- 构建 / 测试：`node build.mjs`、`node test.mjs`（36 项）
+- 构建 / 测试：`node build.mjs`、`node test.mjs`（37 项）
 - 发布步骤：见 [PUBLISH.md](PUBLISH.md)
 
 ## 发布流水线（CI）
 
 - `.github/workflows/test.yml`：任意 push / PR 跑 `node test.mjs` + `node build.mjs --check`。
 - `.github/workflows/release.yml`：手动 Run workflow（push 触发暂关；Trusted Publishing 配好后可按需恢复），四个幂等 job：
-  `verify`（构建一致性 + 36 项测试 + `npm pack --dry-run`）→ `publish`（版本已在 registry 则跳过，
+  `verify`（构建一致性 + 37 项测试 + `npm pack --dry-run`）→ `publish`（版本已在 registry 则跳过，
   优先 OIDC、无 token 时回退 `NPM_TOKEN`；`--provenance --access public`）→ `release`（建 `v<version>` tag 与 Release）→
   `catalog`（fork `awesome-dsh-plugin/awesome-dsh-plugin`，写 `data/plugins/<owner>__<repo>.yml`，开 PR）。
 - npm 认证优先用 **Trusted Publishing**（npmjs.com → 包 Settings → Trusted Publisher → GitHub Actions，
@@ -72,6 +72,9 @@
     （`toolSound` 存毫秒字符串，`off` 关闭）+ 音高（`toolPitch`，低/标准/高），与试听共用同一间隔；
     调度器 `PULSE_TICK_MS = 50`，否则 250 ms 的 tick 会把最快档悄悄压到 4 次/秒；
   - 工具脉冲与文字拍**同音量**（2026-10-20 去掉 0.55 的 velocity，用户要求与其他阶段一致）；
+  - **工具脉冲随机化**（2026-10-20）：`toolPulseGap` 用三角分布在设定值上下抖动（±35%），
+    另有约 15% 概率拉长到 1.6–2.4 倍，模拟打字机节奏；试听通过 `previewPhrase` 的 `intervals`
+    使用同一随机间隔，最短 100 ms；
   - 旧三档 `slow/normal/fast` 在 `normalizeToolSpeed` 里映射到 1.2 s / 0.9 s / 0.6 s，老设置不会丢；
   - 被关闭阶段的文字仍算活动，工作脉冲不会补进来。
 - **非当前会话**用环境脉冲（0.7–1.1 s），因为浏览器只能看到当前会话的 DOM，拿不到其它会话的逐 token 信号。

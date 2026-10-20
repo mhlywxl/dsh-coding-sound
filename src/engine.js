@@ -395,20 +395,24 @@ class MusicEngine {
     }
     void this.bus.resume();
     const count = Number.isFinite(options.count) ? Math.min(8, Math.max(1, Math.round(options.count))) : 4;
+    const clampMs = (value) => Math.min(4000, Math.max(40, Math.round(value)));
     const intervalMs = Number.isFinite(options.intervalMs)
-      ? Math.min(4000, Math.max(40, Math.round(options.intervalMs)))
+      ? clampMs(options.intervalMs)
       : densityIntervalMs(Number.isFinite(options.density) ? options.density : TOKENS_PER_BEAT);
+    const intervals = Array.isArray(options.intervals) ? options.intervals : undefined;
     const velocity = Number.isFinite(options.velocity) ? Math.min(1, Math.max(0, options.velocity)) : 1;
     const shift = options.pitch === "low" ? 0.5 : options.pitch === "high" ? 2 : 1;
     try {
       const chain = this.#buildAuditionChain(context, config);
       const scale = [SCALE_FREQS[0], SCALE_FREQS[2], SCALE_FREQS[4], SCALE_FREQS[6], SCALE_FREQS[1], SCALE_FREQS[3], SCALE_FREQS[5]];
       const base = context.currentTime + 0.01;
+      let offsetMs = 0;
       for (let index = 0; index < count; index += 1) {
         const freq = (scale[index % scale.length] ?? SCALE_FREQS[0]) * shift;
-        this.#auditionNote(context, chain.filter, config, freq, base + (index * intervalMs) / 1000, velocity);
+        this.#auditionNote(context, chain.filter, config, freq, base + offsetMs / 1000, velocity);
+        offsetMs += clampMs(intervals?.[index] ?? intervalMs);
       }
-      this.#after(count * intervalMs + 1400, () => this.#disposeAuditionChain(chain));
+      this.#after(offsetMs + 1400, () => this.#disposeAuditionChain(chain));
       return true;
     } catch {
       return false;

@@ -597,11 +597,12 @@ test("a full-velocity working pulse keeps the current session audible during too
   // No `velocity`: the pulse sounds at the same level as a text beat.
   assert.deepEqual(pulses(), [["pulse", "a", { pitch: "normal" }]]);
 
-  now += settings.TOOL_PULSE_INTERVALS["900"] - 100;
+  const step = sessions.toolPulseGap(settings.TOOL_PULSE_INTERVALS["900"], () => 0);
+  now += step - 1;
   voices.tick();
   assert.equal(pulses().length, 1, "the pulse interval is respected");
 
-  now += 200;
+  now += 1;
   voices.tick();
   assert.equal(pulses().length, 2);
 
@@ -611,6 +612,28 @@ test("a full-velocity working pulse keeps the current session audible during too
   now += 100;
   voices.tick();
   assert.equal(pulses().length, 2, "no pulse right after a text beat");
+});
+
+test("the working pulse jitters like typing instead of ticking like a metronome", () => {
+  const base = 900;
+  let seed = 42;
+  const random = () => {
+    seed = (seed * 1664525 + 1013904223) % 4294967296;
+    return seed / 4294967296;
+  };
+  const gaps = new Set();
+  for (let i = 0; i < 200; i += 1) gaps.add(sessions.toolPulseGap(base, random));
+  assert.ok(gaps.size > 10, "gaps must vary");
+  for (const gap of gaps) {
+    assert.ok(gap >= 100, "never faster than the fastest text beat");
+    assert.ok(gap <= Math.round(base * 2.4), "the pause branch stays bounded");
+  }
+  // Outside the occasional pause, the gap stays inside ±35% of the setting.
+  const normal = [...gaps].filter((gap) => gap < base * 1.5);
+  assert.ok(normal.length > 0);
+  assert.ok(normal.every((gap) => gap >= 585 && gap <= 1215));
+  // The fastest setting still clips at the 100 ms floor.
+  assert.equal(sessions.toolPulseGap(100, () => 0), 100);
 });
 
 test("a waiting session never pulses", () => {
@@ -672,10 +695,11 @@ test("the tool phase can be silenced, retimed and transposed", () => {
   fast.voices.tick();
   const first = fast.engine.calls.filter((call) => call[0] === "pulse");
   assert.deepEqual(first, [["pulse", "a", { pitch: "high" }]]);
-  now += settings.TOOL_PULSE_INTERVALS["600"] - 100;
+  const step = sessions.toolPulseGap(settings.TOOL_PULSE_INTERVALS["600"], () => 0);
+  now += step - 1;
   fast.voices.tick();
-  assert.equal(fast.engine.calls.filter((call) => call[0] === "pulse").length, 1, "the 600 ms rate is respected");
-  now += 200;
+  assert.equal(fast.engine.calls.filter((call) => call[0] === "pulse").length, 1, "the 600 ms pace is respected");
+  now += 1;
   fast.voices.tick();
   assert.equal(fast.engine.calls.filter((call) => call[0] === "pulse").length, 2);
 
@@ -703,7 +727,7 @@ test("the tool phase can be silenced, retimed and transposed", () => {
     now = elapsed;
     slow.voices.tick();
   }
-  assert.ok(beats() >= 1 && beats() <= 2, `a 2 s pulse should ring once or twice in 4 s, got ${beats()}`);
+  assert.ok(beats() >= 1 && beats() <= 3, `a 2 s pulse should ring once to three times in 4 s, got ${beats()}`);
 });
 
 // ---------------------------------------------------------------------------

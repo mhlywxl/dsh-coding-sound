@@ -31,7 +31,7 @@ const {
 const { PRESET_IDS } = presets;
 const { AudioBus, MusicEngine } = engine;
 const { ChimePlayer } = chimes;
-const { SessionVoices } = sessions;
+const { SessionVoices, toolPulseGap } = sessions;
 const { ChatTextObserver } = observer;
 
 /** Package identity; also the Loader row id. */
@@ -63,7 +63,8 @@ function toolPreviewNotes(intervalMs) {
 /** The tool audition's disable window, derived from the selected pulse rate. */
 function toolAuditionLockMs(toolSound) {
   const interval = TOOL_PULSE_INTERVALS[toolSound] ?? TOOL_PULSE_INTERVALS["900"];
-  return Math.max(PHASE_PREVIEW_LOCK_MS, (toolPreviewNotes(interval) - 1) * interval + 1200);
+  // The live pulse jitters each gap up to 2.4×, and the audition previews that.
+  return Math.max(PHASE_PREVIEW_LOCK_MS, Math.round((toolPreviewNotes(interval) - 1) * interval * 2.4) + 1200);
 }
 
 const CSS = `
@@ -739,9 +740,12 @@ function apply(ctx) {
       }
       const interval = TOOL_PULSE_INTERVALS[settingsValue.toolSound];
       if (interval === undefined) return;
+      const count = toolPreviewNotes(interval);
+      // Preview the jittered gaps, so the audition sounds like the live phase.
+      const intervals = Array.from({ length: count - 1 }, () => toolPulseGap(interval, Math.random));
       music.previewPhrase({
-        count: toolPreviewNotes(interval),
-        intervalMs: interval,
+        count,
+        intervals,
         pitch: settingsValue.toolPitch,
       });
     },
