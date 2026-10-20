@@ -73,6 +73,12 @@
   - 旧三档 `slow/normal/fast` 在 `normalizeToolSpeed` 里映射到 1.2 s / 0.9 s / 0.6 s，老设置不会丢；
   - 被关闭阶段的文字仍算活动，工作脉冲不会补进来。
 - **非当前会话**用环境脉冲（0.7–1.1 s），因为浏览器只能看到当前会话的 DOM，拿不到其它会话的逐 token 信号。
+- **音频鲁棒性**（2026-10-20，针对“切换阶段偶尔有沙沙/嗡嗡杂音”）：
+  - `AudioContext` 不是 `running` 时不排音符（`#playNote` 先查 `state`），只 `resume()`。
+    否则挂起期间 `currentTime` 冻结，所有音符落到同一时间戳，恢复瞬间同时发声 → 一声爆音/嗡声；
+  - 起音时间在创建节点**之后**读取，并留 20 ms 余量（`SCHEDULE_LEAD_SECONDS`）；
+    主线程卡顿（阶段切换时的聊天重渲染）不会把 start 推到过去、把 attack 截成咔哒声；
+  - 测试：`a suspended audio context never queues notes into one burst`。
 - **设置导航图标**：宿主按 section id 硬编码图标，未知 id 用齿轮；插件在 label 内放扬声器图标，并用 `button:has(> span [data-coding-sound-nav]) > svg` 隐藏兜底齿轮。
 - **测试台**：`test.mjs` 用 Node 内置 `node:test`，无依赖；覆盖预设参数、设置归一化、去重、会话边沿、阶段相位、Host 无路由、构建产物的离线装配与渲染。
 

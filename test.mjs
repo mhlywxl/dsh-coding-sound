@@ -724,6 +724,64 @@ test("a density maps to one note spacing, shared by the stream and the audition"
   assert.equal(musicModule.densityIntervalMs(99), 300);
 });
 
+test("a suspended audio context never queues notes into one burst", () => {
+  let created = 0;
+  const starts = [];
+  const param = () => ({
+    value: 0,
+    setValueAtTime() { return this; },
+    linearRampToValueAtTime() { return this; },
+    exponentialRampToValueAtTime() { return this; },
+    cancelScheduledValues() { return this; },
+  });
+  const node = () => ({
+    gain: param(),
+    frequency: param(),
+    Q: param(),
+    buffer: null,
+    connect() { return this; },
+    disconnect() {},
+    start(time) { starts.push(time); },
+    stop() {},
+  });
+  class Context {
+    constructor() {
+      this.state = "suspended";
+      this.currentTime = 4;
+      this.sampleRate = 48000;
+      this.destination = node();
+    }
+    createGain() { return node(); }
+    createOscillator() { created += 1; return node(); }
+    createBiquadFilter() { return node(); }
+    createConvolver() { return node(); }
+    createBuffer(channels, length) {
+      const data = Array.from({ length: channels }, () => new Float32Array(length));
+      return { getChannelData: (channel) => data[channel] };
+    }
+    resume() { return Promise.resolve(); }
+    close() { return Promise.resolve(); }
+  }
+  let wall = 4000;
+  const engine = new musicModule.MusicEngine({ bus: new musicModule.AudioBus(Context), clock: () => wall });
+  engine.setPreset("ethereal");
+  engine.startVoice("a", 1);
+
+  // `currentTime` is frozen while suspended: a scheduled note would share one
+  // timestamp with every other one and fire as a single loud cluster on resume.
+  assert.equal(engine.pulse("a"), false);
+  assert.equal(engine.note("a", 40, { charactersPerBeat: 1 }), false);
+  assert.equal(created, 0, "nothing may be scheduled while the clock is stopped");
+
+  // Resumed: one note, scheduled with headroom after the nodes were built.
+  engine.bus.audio.state = "running";
+  engine.bus.audio.currentTime = 5;
+  wall = 5000;
+  assert.equal(engine.note("a", 40, { charactersPerBeat: 1 }), true);
+  assert.equal(created, 1);
+  assert.ok(starts[0] >= 5.01, `a note needs scheduling headroom, got ${starts[0]}`);
+});
+
 test("the density setting paces the live stream, not just the 试听 phrase", () => {
   // Real streaming delivers several characters per DOM flush, so the character
   // gate alone once left the tempo to the flush cadence: the setting only

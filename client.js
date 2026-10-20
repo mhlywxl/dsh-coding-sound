@@ -862,6 +862,14 @@ window.__ModuleLoader__.load({
         }
 
         /**
+         * Headroom between the moment a note is scheduled and the moment it starts.
+         * The engine builds its nodes before reading the audio clock, so a stalled main
+         * thread (a chat re-render right at a phase switch, a GC pause) cannot push the
+         * start time into the past and turn the attack into a click.
+         */
+        const SCHEDULE_LEAD_SECONDS = 0.02;
+
+        /**
          * Owns the page's single `AudioContext` and the first-gesture unlock.
          *
          * Opening a context outside a user gesture is allowed but starts it suspended;
@@ -1356,6 +1364,14 @@ window.__ModuleLoader__.load({
             } catch {
               return false;
             }
+            // A suspended context freezes `currentTime`, so every note scheduled while
+            // it waits would land on the same timestamp and fire together on resume —
+            // the burst of overlapping notes that reads as a buzz/hiss. Drop the note
+            // instead (and nudge the context awake) so the music simply resumes.
+            if (context.state !== "running") {
+              void this.bus.resume();
+              return false;
+            }
             const config = chain.config;
             const level = Number.isFinite(velocity) ? Math.min(1, Math.max(0, velocity)) : 1;
             const pitchShift = pitch === "low" ? 0.5 : pitch === "high" ? 2 : 1;
@@ -1363,14 +1379,17 @@ window.__ModuleLoader__.load({
             const scale = useLow ? OCTAVE_FREQS : SCALE_FREQS;
             const freq = scale[Math.floor(this.random() * scale.length)] ?? SCALE_FREQS[0];
             const detune = 1 + (this.random() - 0.5) * DETUNE_SPREAD;
-            const start = Math.max(context.currentTime, context.currentTime + 0.005);
 
             try {
               const osc = context.createOscillator();
               osc.type = config.oscillatorType;
+              const envelope = context.createGain();
+              // Read the audio clock once the nodes exist: a busy main thread (a chat
+              // re-render right at a phase switch) could otherwise turn a 5 ms lead into
+              // a start time in the past, truncating the attack into a click.
+              const start = context.currentTime + SCHEDULE_LEAD_SECONDS;
               osc.frequency.setValueAtTime(freq * detune * pitchShift, start);
 
-              const envelope = context.createGain();
               const gain = envelope.gain;
               gain.setValueAtTime(0, start);
               gain.linearRampToValueAtTime(level, start + config.attack);
