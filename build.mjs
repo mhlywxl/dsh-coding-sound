@@ -9,9 +9,10 @@
  *
  *   node build.mjs        (write client.js)
  *   node build.mjs --check (report drift without writing)
+ *   node build.mjs --watch (rebuild whenever src/ changes)
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -129,8 +130,14 @@ export { assemble, LOAD_LINE, TARGET as target };
 const invokedDirectly = process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
 if (invokedDirectly) {
-  const expected = assemble();
+  const write = () => {
+    const next = assemble();
+    mkdirSync(HERE, { recursive: true });
+    writeFileSync(TARGET, next, "utf8");
+    console.log(`build: wrote client.js (${next.length} bytes)`);
+  };
   if (process.argv.includes("--check")) {
+    const expected = assemble();
     const current = existsSync(TARGET) ? readFileSync(TARGET, "utf8").replace(/\r\n/g, "\n") : "";
     if (current !== expected) {
       console.error("build: client.js is stale; run `node build.mjs`");
@@ -138,9 +145,21 @@ if (invokedDirectly) {
     } else {
       console.log("build: client.js is up to date");
     }
+  } else if (process.argv.includes("--watch")) {
+    write();
+    let timer = null;
+    watch(join(HERE, "src"), { persistent: true }, () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        try {
+          write();
+        } catch (error) {
+          console.error(`build: ${error instanceof Error ? error.message : error}`);
+        }
+      }, 100);
+    });
+    console.log("build: watching src/ — refresh the DSH page to pick up a rebuild (Ctrl+C stops)");
   } else {
-    mkdirSync(HERE, { recursive: true });
-    writeFileSync(TARGET, expected, "utf8");
-    console.log(`build: wrote client.js (${expected.length} bytes)`);
+    write();
   }
 }

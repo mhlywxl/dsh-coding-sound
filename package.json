@@ -56,6 +56,7 @@
   },
   "scripts": {
     "build": "node build.mjs",
+    "dev": "node build.mjs --watch",
     "check": "node build.mjs --check && node test.mjs",
     "test": "node test.mjs"
   },
