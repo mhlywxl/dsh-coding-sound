@@ -245,8 +245,8 @@ dsh-coding-sound/
 如果这个项目帮你省下了盯屏幕的时间，欢迎请作者喝杯咖啡 ☕，或者给作者「充充电」⚡。金额随意，心意最重要。
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/mhlywxl/dsh-coding-sound/main/assets/alipay.jpg" alt="支付宝收款码" width="180" />
-  <img src="https://raw.githubusercontent.com/mhlywxl/dsh-coding-sound/main/assets/wechat.png" alt="微信收款码" width="180" />
+  <img src="https://raw.githubusercontent.com/mhlywxl/dsh-coding-sound/main/sponsor/alipay.jpg" alt="支付宝收款码" width="180" />
+  <img src="https://raw.githubusercontent.com/mhlywxl/dsh-coding-sound/main/sponsor/wechat.png" alt="微信收款码" width="180" />
 </p>
 <p align="center"><sub>支付宝 · 微信支付</sub></p>
 
