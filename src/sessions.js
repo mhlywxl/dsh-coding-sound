@@ -370,15 +370,17 @@ class SessionVoices {
         continue;
       }
       if (id === current) {
-        // `toolSound` is the phase's own switch: `off` removes the speed, which
-        // silences the pulse entirely.
-        const interval = TOOL_PULSE_INTERVALS[this.getSettings().toolSound];
+        // `toolSound` is the phase's own switch and rate: `off` removes the
+        // interval, which silences the pulse entirely; `toolPitch` transposes
+        // it like the text phases.
+        const settingsValue = this.getSettings();
+        const interval = TOOL_PULSE_INTERVALS[settingsValue.toolSound];
         if (interval === undefined) continue;
         if (now - this.lastCurrentActivity < WORKING_PULSE_IDLE_MS) continue;
         const lastPulse = this.lastWorkingPulse.get(id);
         if (lastPulse !== undefined && now - lastPulse < interval) continue;
         this.lastWorkingPulse.set(id, now);
-        this.engine.pulse(id, { velocity: WORKING_PULSE_VELOCITY });
+        this.engine.pulse(id, { velocity: WORKING_PULSE_VELOCITY, pitch: settingsValue.toolPitch });
         continue;
       }
       const last = this.lastPulse.get(id);

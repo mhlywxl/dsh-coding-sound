@@ -52,6 +52,20 @@ const PHASE_PREVIEW_LOCK_MS = 1800;
 /** The card's panel id, referenced by `aria-controls`. */
 const PANEL_ID = "coding-sound-panel";
 
+/**
+ * How many notes a tool audition plays at one pulse rate: slow rates get two,
+ * so a 2 s setting does not turn one click into a six-second phrase.
+ */
+function toolPreviewNotes(intervalMs) {
+  return intervalMs >= 1200 ? 2 : 3;
+}
+
+/** The tool audition's disable window, derived from the selected pulse rate. */
+function toolAuditionLockMs(toolSound) {
+  const interval = TOOL_PULSE_INTERVALS[toolSound] ?? TOOL_PULSE_INTERVALS["900"];
+  return Math.max(PHASE_PREVIEW_LOCK_MS, (toolPreviewNotes(interval) - 1) * interval + 1200);
+}
+
 const CSS = `
 .dcs-card{display:flex;flex-direction:column;box-sizing:border-box;width:100%;max-width:720px;padding:12px 14px;border:0.5px solid var(--dsw-alias-border-l1,rgba(127,127,127,.22));border-radius:12px;background:var(--dsw-alias-bg-layer-1,transparent);color:var(--dsw-alias-label-primary,inherit)}
 .dcs-head{display:flex;align-items:center;gap:10px;min-height:28px}
@@ -135,7 +149,7 @@ const zh = Object.freeze({
   otherVolumeHint: "其他会话仍在后台工作时使用的音量",
   noAudio: "这个浏览器不支持 Web Audio，声音无法播放。",
   phaseTitle: "阶段声音",
-  phaseHint: "思考 / 回答 / 工具执行，可分别关闭与调整",
+  phaseHint: "思考 / 回答 / 工具执行，可分别关闭、调频率与音高",
   phaseThinking: "思考",
   phaseAnswer: "回答正文",
   phaseTool: "工具执行",
@@ -145,10 +159,8 @@ const zh = Object.freeze({
   pitchLow: "低",
   pitchNormal: "标准",
   pitchHigh: "高",
-  toolPulse: "脉冲",
-  speedSlow: "慢",
-  speedNormal: "标准",
-  speedFast: "快",
+  toolPulse: "脉冲频率",
+  secondsUnit: "秒",
 });
 
 const en = Object.freeze({
@@ -181,7 +193,7 @@ const en = Object.freeze({
   otherVolumeHint: "Volume used by sessions still working in the background",
   noAudio: "This browser has no Web Audio; sound cannot play.",
   phaseTitle: "Phase sounds",
-  phaseHint: "Thinking / answer / tool execution — each can be tuned or muted",
+  phaseHint: "Thinking / answer / tool execution — each can be muted, retimed or transposed",
   phaseThinking: "Thinking",
   phaseAnswer: "Answer",
   phaseTool: "Tool execution",
@@ -191,10 +203,8 @@ const en = Object.freeze({
   pitchLow: "Low",
   pitchNormal: "Normal",
   pitchHigh: "High",
-  toolPulse: "pulse",
-  speedSlow: "Slow",
-  speedNormal: "Normal",
-  speedFast: "Fast",
+  toolPulse: "pulse rate",
+  secondsUnit: "s",
 });
 
 /** Insert the plugin stylesheet once; removed by the plugin's disposer. */
@@ -408,12 +418,11 @@ function createSoundSection(deps) {
       { value: "normal", label: t("pitchNormal") },
       { value: "high", label: t("pitchHigh") },
     ];
-    const toolSpeedChoices = [
-      { value: "slow", label: t("speedSlow") },
-      { value: "normal", label: t("speedNormal") },
-      { value: "fast", label: t("speedFast") },
-    ];
-    const phasePreview = (phase, enabled, label) =>
+    const toolSpeedChoices = Object.entries(TOOL_PULSE_INTERVALS).map(([value, milliseconds]) => ({
+      value,
+      label: `${milliseconds / 1000} ${t("secondsUnit")}`,
+    }));
+    const phasePreview = (phase, enabled, label, lockMs = PHASE_PREVIEW_LOCK_MS) =>
       h(
         "button",
         {
@@ -422,13 +431,14 @@ function createSoundSection(deps) {
           title: t("preview"),
           "aria-label": `${label} ${t("preview")}`,
           disabled: !enabled || busy[`phase:${phase}`] === true,
-          onClick: () => lock(`phase:${phase}`, () => previewPhase(phase), PHASE_PREVIEW_LOCK_MS),
+          onClick: () => lock(`phase:${phase}`, () => previewPhase(phase), lockMs),
         },
         playIcon(),
       );
 
     // The per-phase card: thinking and answer are token-driven and each has its
-    // own density/pitch; tool execution has no text, so it only has a pulse speed.
+    // own density/pitch; tool execution has no text, so its rate is the pulse
+    // interval (six steps plus off) and it has the same pitch choice.
     const phaseCard = h(
       "div",
       { className: "dcs-card" },
@@ -475,15 +485,22 @@ function createSoundSection(deps) {
           }),
           phasePreview("answer", current.answerSound, t("phaseAnswer")),
         ]),
-        phaseRow(t("phaseTool"), current.toolSound !== "off", (on) => store.set({ toolSound: on ? "normal" : "off" }), [
+        phaseRow(t("phaseTool"), current.toolSound !== "off", (on) => store.set({ toolSound: on ? "900" : "off" }), [
           h(SelectBox, {
             label: `${t("phaseTool")} ${t("toolPulse")}`,
-            value: current.toolSound === "off" ? "normal" : current.toolSound,
+            value: current.toolSound === "off" ? "900" : current.toolSound,
             choices: toolSpeedChoices,
             disabled: current.toolSound === "off",
             onChange: (value) => store.set({ toolSound: value }),
           }),
-          phasePreview("tool", current.toolSound !== "off", t("phaseTool")),
+          h(SelectBox, {
+            label: `${t("phaseTool")} ${t("pitch")}`,
+            value: current.toolPitch,
+            choices: pitchChoices,
+            disabled: current.toolSound === "off",
+            onChange: (value) => store.set({ toolPitch: value }),
+          }),
+          phasePreview("tool", current.toolSound !== "off", t("phaseTool"), toolAuditionLockMs(current.toolSound)),
         ]),
       ),
     );
@@ -722,7 +739,12 @@ function apply(ctx) {
       }
       const interval = TOOL_PULSE_INTERVALS[settingsValue.toolSound];
       if (interval === undefined) return;
-      music.previewPhrase({ count: 3, intervalMs: interval, velocity: 0.55, pitch: "normal" });
+      music.previewPhrase({
+        count: toolPreviewNotes(interval),
+        intervalMs: interval,
+        velocity: 0.55,
+        pitch: settingsValue.toolPitch,
+      });
     },
   });
 

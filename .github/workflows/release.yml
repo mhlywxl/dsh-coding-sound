@@ -277,7 +277,7 @@ jobs:
 
           - Token-driven generative music while the model streams: 4 presets, one voice per session, so two busy sessions do not collide.
           - Separate completion and attention chimes; all options are synthesized in the browser with Web Audio, so the package ships no audio files.
-          - Per-phase settings: thinking, answer and tool-run sounds each have their own switch plus density and pitch (or pulse speed) controls, and every option has an audition button.
+          - Per-phase settings: thinking, answer and tool-run sounds each have their own switch plus a rate (density or pulse frequency) and a pitch, and every option has an audition button.
           - Settings card under Settings -> Sound.
 
           ## Install

@@ -233,10 +233,12 @@ test("per-phase defaults, clamping, and merging", () => {
   assert.equal(settings.DEFAULTS.answerSound, true);
   assert.equal(settings.DEFAULTS.answerDensity, 4);
   assert.equal(settings.DEFAULTS.answerPitch, "normal");
-  assert.equal(settings.DEFAULTS.toolSound, "normal");
+  assert.equal(settings.DEFAULTS.toolSound, "900");
+  assert.equal(settings.DEFAULTS.toolPitch, "normal");
   assert.deepEqual([...settings.DENSITY_VALUES], [1, 2, 3, 4, 6, 8]);
   assert.deepEqual([...settings.PITCH_IDS], ["low", "normal", "high"]);
-  assert.deepEqual([...settings.TOOL_SPEED_IDS], ["off", "slow", "normal", "fast"]);
+  assert.deepEqual([...settings.TOOL_SPEED_IDS], ["off", "400", "600", "900", "1200", "1600", "2000"]);
+  assert.deepEqual({ ...settings.TOOL_PULSE_INTERVALS }, { 400: 400, 600: 600, 900: 900, 1200: 1200, 1600: 1600, 2000: 2000 });
 
   assert.equal(settings.normalizeSettings({ thinkingSound: false }).thinkingSound, false);
   assert.equal(settings.normalizeSettings({ thinkingDensity: 0 }).thinkingDensity, 1);
@@ -245,7 +247,14 @@ test("per-phase defaults, clamping, and merging", () => {
   assert.equal(settings.normalizeSettings({ thinkingPitch: "ultra" }).thinkingPitch, "normal");
   assert.equal(settings.normalizeSettings({ answerPitch: "high" }).answerPitch, "high");
   assert.equal(settings.normalizeSettings({ toolSound: "off" }).toolSound, "off");
-  assert.equal(settings.normalizeSettings({ toolSound: "warp" }).toolSound, "normal");
+  assert.equal(settings.normalizeSettings({ toolSound: "1600" }).toolSound, "1600");
+  assert.equal(settings.normalizeSettings({ toolSound: "warp" }).toolSound, "900");
+  // The three-step card's values keep their meaning instead of resetting.
+  assert.equal(settings.normalizeSettings({ toolSound: "slow" }).toolSound, "1200");
+  assert.equal(settings.normalizeSettings({ toolSound: "normal" }).toolSound, "900");
+  assert.equal(settings.normalizeSettings({ toolSound: "fast" }).toolSound, "600");
+  assert.equal(settings.normalizeSettings({ toolPitch: "high" }).toolPitch, "high");
+  assert.equal(settings.normalizeSettings({ toolPitch: "ultra" }).toolPitch, "normal");
   assert.equal(settings.normalizeSettings({ thinkingSound: "yes" }).thinkingSound, true);
 
   const merged = settings.resolveSettings({ thinkingDensity: 6 }, { thinkingDensity: 1 });
@@ -578,9 +587,9 @@ test("a quiet working pulse keeps the current session audible during tools and p
 
   now = sessions.WORKING_PULSE_IDLE_MS + 100;
   voices.tick();
-  assert.deepEqual(pulses(), [["pulse", "a", { velocity: sessions.WORKING_PULSE_VELOCITY }]]);
+  assert.deepEqual(pulses(), [["pulse", "a", { velocity: sessions.WORKING_PULSE_VELOCITY, pitch: "normal" }]]);
 
-  now += settings.TOOL_PULSE_INTERVALS.normal - 100;
+  now += settings.TOOL_PULSE_INTERVALS["900"] - 100;
   voices.tick();
   assert.equal(pulses().length, 1, "the pulse interval is respected");
 
@@ -637,7 +646,7 @@ test("each phase uses its own density, pitch, and switch", () => {
   assert.equal(clocked.engine.calls.filter((call) => call[0] === "pulse").length, 0);
 });
 
-test("the tool phase can be silenced or sped up", () => {
+test("the tool phase can be silenced, retimed and transposed", () => {
   let now = 0;
   const off = buildVoices({ clock: () => now, settings: { ...settings.DEFAULTS, toolSound: "off" } });
   off.voices.apply(new Map([["a", { running: true }]]));
@@ -646,17 +655,33 @@ test("the tool phase can be silenced or sped up", () => {
   assert.equal(off.engine.calls.filter((call) => call[0] === "pulse").length, 0);
 
   now = 0;
-  const fast = buildVoices({ clock: () => now, settings: { ...settings.DEFAULTS, toolSound: "fast" } });
+  const fast = buildVoices({
+    clock: () => now,
+    settings: { ...settings.DEFAULTS, toolSound: "600", toolPitch: "high" },
+  });
   fast.voices.apply(new Map([["a", { running: true }]]));
   now = sessions.WORKING_PULSE_IDLE_MS + 100;
   fast.voices.tick();
-  assert.equal(fast.engine.calls.filter((call) => call[0] === "pulse").length, 1);
-  now += settings.TOOL_PULSE_INTERVALS.fast - 100;
+  const first = fast.engine.calls.filter((call) => call[0] === "pulse");
+  assert.deepEqual(first, [["pulse", "a", { velocity: sessions.WORKING_PULSE_VELOCITY, pitch: "high" }]]);
+  now += settings.TOOL_PULSE_INTERVALS["600"] - 100;
   fast.voices.tick();
-  assert.equal(fast.engine.calls.filter((call) => call[0] === "pulse").length, 1, "fast still respects 550 ms");
+  assert.equal(fast.engine.calls.filter((call) => call[0] === "pulse").length, 1, "the 600 ms rate is respected");
   now += 200;
   fast.voices.tick();
   assert.equal(fast.engine.calls.filter((call) => call[0] === "pulse").length, 2);
+
+  // Every offered rate is a distinct interval; two very different settings run
+  // the pulse at visibly different speeds.
+  const slow = buildVoices({ clock: () => now, settings: { ...settings.DEFAULTS, toolSound: "2000" } });
+  slow.voices.apply(new Map([["a", { running: true }]]));
+  const start = now;
+  const beats = () => slow.engine.calls.filter((call) => call[0] === "pulse").length;
+  for (let elapsed = start; elapsed <= start + 4000; elapsed += 100) {
+    now = elapsed;
+    slow.voices.tick();
+  }
+  assert.ok(beats() >= 1 && beats() <= 2, `a 2 s pulse should ring once or twice in 4 s, got ${beats()}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -1052,10 +1077,28 @@ test("the built client module applies cleanly against a fake runtime", () => {
     assert.equal(first.props.className, "dcs-stack");
     assert.equal(collect(first, (node) => node.props?.className === "dcs-row").length, 6);
     assert.equal(collect(first, (node) => node.props?.className === "dcs-phase-row").length, 3);
-    assert.equal(collect(first, (node) => node.type === "select").length, 8);
+    assert.equal(collect(first, (node) => node.type === "select").length, 9);
     assert.equal(collect(first, (node) => node.props?.role === "switch").length, 3);
     assert.equal(collect(first, (node) => node.props?.className === "dcs-preview").length, 6);
     assert.ok(collect(first, (node) => node.props?.className?.includes("dcs-badge--custom")).length === 1);
+    // The tool phase now has the same two controls as the text phases: a rate
+    // (six steps plus the switch's off) and a pitch.
+    const toolControls = collect(
+      first,
+      (node) => node.type === "select" && String(node.props?.["aria-label"]).startsWith("phaseTool"),
+    );
+    assert.equal(toolControls.length, 2);
+    const toolRate = toolControls[0];
+    assert.equal(toolRate.props.value, "900");
+    const toolOptions = toolRate.children[0];
+    assert.equal(toolOptions.length, 6);
+    assert.deepEqual(
+      toolOptions.map((option) => option.props.value),
+      ["400", "600", "900", "1200", "1600", "2000"],
+    );
+    assert.match(toolOptions[0].children[0], /^0\.4 /);
+    assert.match(toolOptions[5].children[0], /^2 /);
+    assert.equal(toolControls[1].props.value, "normal");
 
     // Auditioning a phase works even before a session runs.
     const thinkingPreview = collect(
@@ -1064,6 +1107,15 @@ test("the built client module applies cleanly against a fake runtime", () => {
     );
     assert.equal(thinkingPreview.length, 1);
     thinkingPreview[0].props.onClick();
+    assert.equal(FakeAudioContext.instances.length, 1);
+
+    // The tool audition takes the new rate and pitch; a slow rate must not throw.
+    const toolPreview = collect(
+      first,
+      (node) => node.props?.className === "dcs-preview" && String(node.props?.["aria-label"]).startsWith("phaseTool"),
+    );
+    assert.equal(toolPreview.length, 1);
+    toolPreview[0].props.onClick();
     assert.equal(FakeAudioContext.instances.length, 1);
 
     // Selecting "off" on the three main sound rows hides those preview buttons;

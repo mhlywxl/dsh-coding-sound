@@ -179,14 +179,30 @@ window.__ModuleLoader__.load({
         /** The chime choices, in the dropdown's order. */
         const SOUND_PREF_IDS = ["off", "synth", "positive", "correct", "start", "back"];
 
-        /** Pitch choices for the thinking and answer phases. */
+        /** Pitch choices for the thinking, answer and tool phases. */
         const PITCH_IDS = ["low", "normal", "high"];
         /** Per-phase beat densities offered by the card, in characters per note. */
         const DENSITY_VALUES = [1, 2, 3, 4, 6, 8];
-        /** Tool/idle pulse speeds; `off` silences that phase. */
-        const TOOL_SPEED_IDS = ["off", "slow", "normal", "fast"];
-        /** Pulse interval per tool speed, in milliseconds. */
-        const TOOL_PULSE_INTERVALS = Object.freeze({ slow: 1400, normal: 900, fast: 550 });
+        /**
+         * Tool/idle pulse rates, in milliseconds between pulses. `off` silences the
+         * phase. Six steps instead of the old 慢/标准/快, so the pulse is tunable like
+         * the text phases, and a separate pitch transposes it.
+         */
+        const TOOL_PULSE_INTERVALS = Object.freeze({
+          400: 400,
+          600: 600,
+          900: 900,
+          1200: 1200,
+          1600: 1600,
+          2000: 2000,
+        });
+        /** Values the tool-sound dropdown offers: every interval, plus `off`. */
+        const TOOL_SPEED_IDS = ["off", ...Object.keys(TOOL_PULSE_INTERVALS)];
+        /**
+         * Stored values written by the three-step card (慢/标准/快). They keep working:
+         * the same setting is adopted at its nearest new step instead of being reset.
+         */
+        const LEGACY_TOOL_SPEED_IDS = Object.freeze({ slow: "1200", normal: "900", fast: "600" });
 
         /** Every persisted field, in a stable order. */
         const SETTINGS_KEYS = [
@@ -203,6 +219,7 @@ window.__ModuleLoader__.load({
           "answerDensity",
           "answerPitch",
           "toolSound",
+          "toolPitch",
         ];
 
         /**
@@ -226,7 +243,8 @@ window.__ModuleLoader__.load({
           answerSound: true,
           answerDensity: 4,
           answerPitch: "normal",
-          toolSound: "normal",
+          toolSound: "900",
+          toolPitch: "normal",
         });
 
         /** Volume floor/ceiling and slider step for both kinds of volume. */
@@ -273,9 +291,11 @@ window.__ModuleLoader__.load({
           return PITCH_SET.has(value) ? value : fallback;
         }
 
-        /** A tool pulse speed, falling back to the default. */
+        /** A tool pulse rate, accepting the 慢/标准/快 values written by older cards. */
         function normalizeToolSpeed(value, fallback) {
-          return TOOL_SPEED_SET.has(value) ? value : fallback;
+          const legacy = LEGACY_TOOL_SPEED_IDS[value];
+          const id = legacy !== undefined ? legacy : value;
+          return TOOL_SPEED_SET.has(id) ? id : fallback;
         }
 
         /** Characters per beat, clamped to the offered 1–8 range. */
@@ -318,6 +338,7 @@ window.__ModuleLoader__.load({
             answerDensity: normalizeDensity(source.answerDensity, DEFAULTS.answerDensity),
             answerPitch: normalizePitch(source.answerPitch, DEFAULTS.answerPitch),
             toolSound: normalizeToolSpeed(source.toolSound, DEFAULTS.toolSound),
+            toolPitch: normalizePitch(source.toolPitch, DEFAULTS.toolPitch),
           };
         }
 
@@ -556,6 +577,7 @@ window.__ModuleLoader__.load({
           DENSITY_VALUES,
           TOOL_SPEED_IDS,
           TOOL_PULSE_INTERVALS,
+          LEGACY_TOOL_SPEED_IDS,
           DEFAULTS,
           VOLUME_MIN,
           VOLUME_MAX,
@@ -1160,7 +1182,7 @@ window.__ModuleLoader__.load({
             void this.bus.resume();
             const count = Number.isFinite(options.count) ? Math.min(8, Math.max(1, Math.round(options.count))) : 4;
             const intervalMs = Number.isFinite(options.intervalMs)
-              ? Math.min(600, Math.max(40, Math.round(options.intervalMs)))
+              ? Math.min(4000, Math.max(40, Math.round(options.intervalMs)))
               : densityIntervalMs(Number.isFinite(options.density) ? options.density : TOKENS_PER_BEAT);
             const velocity = Number.isFinite(options.velocity) ? Math.min(1, Math.max(0, options.velocity)) : 1;
             const shift = options.pitch === "low" ? 0.5 : options.pitch === "high" ? 2 : 1;
@@ -2079,15 +2101,17 @@ window.__ModuleLoader__.load({
                 continue;
               }
               if (id === current) {
-                // `toolSound` is the phase's own switch: `off` removes the speed, which
-                // silences the pulse entirely.
-                const interval = TOOL_PULSE_INTERVALS[this.getSettings().toolSound];
+                // `toolSound` is the phase's own switch and rate: `off` removes the
+                // interval, which silences the pulse entirely; `toolPitch` transposes
+                // it like the text phases.
+                const settingsValue = this.getSettings();
+                const interval = TOOL_PULSE_INTERVALS[settingsValue.toolSound];
                 if (interval === undefined) continue;
                 if (now - this.lastCurrentActivity < WORKING_PULSE_IDLE_MS) continue;
                 const lastPulse = this.lastWorkingPulse.get(id);
                 if (lastPulse !== undefined && now - lastPulse < interval) continue;
                 this.lastWorkingPulse.set(id, now);
-                this.engine.pulse(id, { velocity: WORKING_PULSE_VELOCITY });
+                this.engine.pulse(id, { velocity: WORKING_PULSE_VELOCITY, pitch: settingsValue.toolPitch });
                 continue;
               }
               const last = this.lastPulse.get(id);
@@ -2176,6 +2200,20 @@ window.__ModuleLoader__.load({
         /** The card's panel id, referenced by `aria-controls`. */
         const PANEL_ID = "coding-sound-panel";
 
+        /**
+         * How many notes a tool audition plays at one pulse rate: slow rates get two,
+         * so a 2 s setting does not turn one click into a six-second phrase.
+         */
+        function toolPreviewNotes(intervalMs) {
+          return intervalMs >= 1200 ? 2 : 3;
+        }
+
+        /** The tool audition's disable window, derived from the selected pulse rate. */
+        function toolAuditionLockMs(toolSound) {
+          const interval = TOOL_PULSE_INTERVALS[toolSound] ?? TOOL_PULSE_INTERVALS["900"];
+          return Math.max(PHASE_PREVIEW_LOCK_MS, (toolPreviewNotes(interval) - 1) * interval + 1200);
+        }
+
         const CSS = `
         .dcs-card{display:flex;flex-direction:column;box-sizing:border-box;width:100%;max-width:720px;padding:12px 14px;border:0.5px solid var(--dsw-alias-border-l1,rgba(127,127,127,.22));border-radius:12px;background:var(--dsw-alias-bg-layer-1,transparent);color:var(--dsw-alias-label-primary,inherit)}
         .dcs-head{display:flex;align-items:center;gap:10px;min-height:28px}
@@ -2259,7 +2297,7 @@ window.__ModuleLoader__.load({
           otherVolumeHint: "其他会话仍在后台工作时使用的音量",
           noAudio: "这个浏览器不支持 Web Audio，声音无法播放。",
           phaseTitle: "阶段声音",
-          phaseHint: "思考 / 回答 / 工具执行，可分别关闭与调整",
+          phaseHint: "思考 / 回答 / 工具执行，可分别关闭、调频率与音高",
           phaseThinking: "思考",
           phaseAnswer: "回答正文",
           phaseTool: "工具执行",
@@ -2269,10 +2307,8 @@ window.__ModuleLoader__.load({
           pitchLow: "低",
           pitchNormal: "标准",
           pitchHigh: "高",
-          toolPulse: "脉冲",
-          speedSlow: "慢",
-          speedNormal: "标准",
-          speedFast: "快",
+          toolPulse: "脉冲频率",
+          secondsUnit: "秒",
         });
 
         const en = Object.freeze({
@@ -2305,7 +2341,7 @@ window.__ModuleLoader__.load({
           otherVolumeHint: "Volume used by sessions still working in the background",
           noAudio: "This browser has no Web Audio; sound cannot play.",
           phaseTitle: "Phase sounds",
-          phaseHint: "Thinking / answer / tool execution — each can be tuned or muted",
+          phaseHint: "Thinking / answer / tool execution — each can be muted, retimed or transposed",
           phaseThinking: "Thinking",
           phaseAnswer: "Answer",
           phaseTool: "Tool execution",
@@ -2315,10 +2351,8 @@ window.__ModuleLoader__.load({
           pitchLow: "Low",
           pitchNormal: "Normal",
           pitchHigh: "High",
-          toolPulse: "pulse",
-          speedSlow: "Slow",
-          speedNormal: "Normal",
-          speedFast: "Fast",
+          toolPulse: "pulse rate",
+          secondsUnit: "s",
         });
 
         /** Insert the plugin stylesheet once; removed by the plugin's disposer. */
@@ -2532,12 +2566,11 @@ window.__ModuleLoader__.load({
               { value: "normal", label: t("pitchNormal") },
               { value: "high", label: t("pitchHigh") },
             ];
-            const toolSpeedChoices = [
-              { value: "slow", label: t("speedSlow") },
-              { value: "normal", label: t("speedNormal") },
-              { value: "fast", label: t("speedFast") },
-            ];
-            const phasePreview = (phase, enabled, label) =>
+            const toolSpeedChoices = Object.entries(TOOL_PULSE_INTERVALS).map(([value, milliseconds]) => ({
+              value,
+              label: `${milliseconds / 1000} ${t("secondsUnit")}`,
+            }));
+            const phasePreview = (phase, enabled, label, lockMs = PHASE_PREVIEW_LOCK_MS) =>
               h(
                 "button",
                 {
@@ -2546,13 +2579,14 @@ window.__ModuleLoader__.load({
                   title: t("preview"),
                   "aria-label": `${label} ${t("preview")}`,
                   disabled: !enabled || busy[`phase:${phase}`] === true,
-                  onClick: () => lock(`phase:${phase}`, () => previewPhase(phase), PHASE_PREVIEW_LOCK_MS),
+                  onClick: () => lock(`phase:${phase}`, () => previewPhase(phase), lockMs),
                 },
                 playIcon(),
               );
 
             // The per-phase card: thinking and answer are token-driven and each has its
-            // own density/pitch; tool execution has no text, so it only has a pulse speed.
+            // own density/pitch; tool execution has no text, so its rate is the pulse
+            // interval (six steps plus off) and it has the same pitch choice.
             const phaseCard = h(
               "div",
               { className: "dcs-card" },
@@ -2599,15 +2633,22 @@ window.__ModuleLoader__.load({
                   }),
                   phasePreview("answer", current.answerSound, t("phaseAnswer")),
                 ]),
-                phaseRow(t("phaseTool"), current.toolSound !== "off", (on) => store.set({ toolSound: on ? "normal" : "off" }), [
+                phaseRow(t("phaseTool"), current.toolSound !== "off", (on) => store.set({ toolSound: on ? "900" : "off" }), [
                   h(SelectBox, {
                     label: `${t("phaseTool")} ${t("toolPulse")}`,
-                    value: current.toolSound === "off" ? "normal" : current.toolSound,
+                    value: current.toolSound === "off" ? "900" : current.toolSound,
                     choices: toolSpeedChoices,
                     disabled: current.toolSound === "off",
                     onChange: (value) => store.set({ toolSound: value }),
                   }),
-                  phasePreview("tool", current.toolSound !== "off", t("phaseTool")),
+                  h(SelectBox, {
+                    label: `${t("phaseTool")} ${t("pitch")}`,
+                    value: current.toolPitch,
+                    choices: pitchChoices,
+                    disabled: current.toolSound === "off",
+                    onChange: (value) => store.set({ toolPitch: value }),
+                  }),
+                  phasePreview("tool", current.toolSound !== "off", t("phaseTool"), toolAuditionLockMs(current.toolSound)),
                 ]),
               ),
             );
@@ -2846,7 +2887,12 @@ window.__ModuleLoader__.load({
               }
               const interval = TOOL_PULSE_INTERVALS[settingsValue.toolSound];
               if (interval === undefined) return;
-              music.previewPhrase({ count: 3, intervalMs: interval, velocity: 0.55, pitch: "normal" });
+              music.previewPhrase({
+                count: toolPreviewNotes(interval),
+                intervalMs: interval,
+                velocity: 0.55,
+                pitch: settingsValue.toolPitch,
+              });
             },
           });
 

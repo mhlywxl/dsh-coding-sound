@@ -22,14 +22,30 @@ const EXPANDED_KEY = "dsh:coding-sound:expanded";
 /** The chime choices, in the dropdown's order. */
 const SOUND_PREF_IDS = ["off", "synth", "positive", "correct", "start", "back"];
 
-/** Pitch choices for the thinking and answer phases. */
+/** Pitch choices for the thinking, answer and tool phases. */
 const PITCH_IDS = ["low", "normal", "high"];
 /** Per-phase beat densities offered by the card, in characters per note. */
 const DENSITY_VALUES = [1, 2, 3, 4, 6, 8];
-/** Tool/idle pulse speeds; `off` silences that phase. */
-const TOOL_SPEED_IDS = ["off", "slow", "normal", "fast"];
-/** Pulse interval per tool speed, in milliseconds. */
-const TOOL_PULSE_INTERVALS = Object.freeze({ slow: 1400, normal: 900, fast: 550 });
+/**
+ * Tool/idle pulse rates, in milliseconds between pulses. `off` silences the
+ * phase. Six steps instead of the old 慢/标准/快, so the pulse is tunable like
+ * the text phases, and a separate pitch transposes it.
+ */
+const TOOL_PULSE_INTERVALS = Object.freeze({
+  400: 400,
+  600: 600,
+  900: 900,
+  1200: 1200,
+  1600: 1600,
+  2000: 2000,
+});
+/** Values the tool-sound dropdown offers: every interval, plus `off`. */
+const TOOL_SPEED_IDS = ["off", ...Object.keys(TOOL_PULSE_INTERVALS)];
+/**
+ * Stored values written by the three-step card (慢/标准/快). They keep working:
+ * the same setting is adopted at its nearest new step instead of being reset.
+ */
+const LEGACY_TOOL_SPEED_IDS = Object.freeze({ slow: "1200", normal: "900", fast: "600" });
 
 /** Every persisted field, in a stable order. */
 const SETTINGS_KEYS = [
@@ -46,6 +62,7 @@ const SETTINGS_KEYS = [
   "answerDensity",
   "answerPitch",
   "toolSound",
+  "toolPitch",
 ];
 
 /**
@@ -69,7 +86,8 @@ const DEFAULTS = Object.freeze({
   answerSound: true,
   answerDensity: 4,
   answerPitch: "normal",
-  toolSound: "normal",
+  toolSound: "900",
+  toolPitch: "normal",
 });
 
 /** Volume floor/ceiling and slider step for both kinds of volume. */
@@ -116,9 +134,11 @@ function normalizePitch(value, fallback) {
   return PITCH_SET.has(value) ? value : fallback;
 }
 
-/** A tool pulse speed, falling back to the default. */
+/** A tool pulse rate, accepting the 慢/标准/快 values written by older cards. */
 function normalizeToolSpeed(value, fallback) {
-  return TOOL_SPEED_SET.has(value) ? value : fallback;
+  const legacy = LEGACY_TOOL_SPEED_IDS[value];
+  const id = legacy !== undefined ? legacy : value;
+  return TOOL_SPEED_SET.has(id) ? id : fallback;
 }
 
 /** Characters per beat, clamped to the offered 1–8 range. */
@@ -161,6 +181,7 @@ function normalizeSettings(raw) {
     answerDensity: normalizeDensity(source.answerDensity, DEFAULTS.answerDensity),
     answerPitch: normalizePitch(source.answerPitch, DEFAULTS.answerPitch),
     toolSound: normalizeToolSpeed(source.toolSound, DEFAULTS.toolSound),
+    toolPitch: normalizePitch(source.toolPitch, DEFAULTS.toolPitch),
   };
 }
 
@@ -399,6 +420,7 @@ module.exports = {
   DENSITY_VALUES,
   TOOL_SPEED_IDS,
   TOOL_PULSE_INTERVALS,
+  LEGACY_TOOL_SPEED_IDS,
   DEFAULTS,
   VOLUME_MIN,
   VOLUME_MAX,

@@ -388,7 +388,7 @@ class MusicEngine {
     void this.bus.resume();
     const count = Number.isFinite(options.count) ? Math.min(8, Math.max(1, Math.round(options.count))) : 4;
     const intervalMs = Number.isFinite(options.intervalMs)
-      ? Math.min(600, Math.max(40, Math.round(options.intervalMs)))
+      ? Math.min(4000, Math.max(40, Math.round(options.intervalMs)))
       : densityIntervalMs(Number.isFinite(options.density) ? options.density : TOKENS_PER_BEAT);
     const velocity = Number.isFinite(options.velocity) ? Math.min(1, Math.max(0, options.velocity)) : 1;
     const shift = options.pitch === "low" ? 0.5 : options.pitch === "high" ? 2 : 1;
