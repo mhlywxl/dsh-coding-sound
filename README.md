@@ -121,7 +121,7 @@ dsh plugin --profile desktop add link:D:\dev\harness\dsh-coding-sound
 # 构建浏览器包（src/*.js → client.js）
 node build.mjs          # 或 npm run build
 node build.mjs --check  # 仅检查产物是否最新
-node test.mjs           # 35 项离线测试，含把生成后的 client.js 在假运行时里跑一遍
+node test.mjs           # 36 项离线测试，含把生成后的 client.js 在假运行时里跑一遍
 ```
 
 Host 半改动（`index.js`）需要重启 DSH 才能生效；只改 `src/` 时重新 `node build.mjs` 并**刷新页面**（Client 产物按启动时的模块图加载，刷新才会取到新文件）。
@@ -212,7 +212,7 @@ dsh-coding-sound/
 | A12 | 子代理/工具不触发完成音；重连不重复 | 子代理与去重有单测；重连需人工 |
 | A13 | 4 个素材与参考同源 | 已按 D4 替换为合成实现，包内不再携带 WAV |
 | A14 | 与 typewriter-blip / ui-beep 并存 | 不共享 DOM/节点，设计上可并存；冲突提示未做 |
-| A15 | 离线测试 + 无类型错误 | `node test.mjs` 35/35；无 TS 构建 |
+| A15 | 离线测试 + 无类型错误 | `node test.mjs` 36/36；无 TS 构建 |
 | A16 | 各种全关组合静音且不报错 | 徽章/静音映射有单测；需人工听 |
 
 ## 与参考实现的差异 / 已知限制

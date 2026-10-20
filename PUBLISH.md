@@ -27,7 +27,7 @@ cd /path/to/dsh-coding-sound    # 换成你的仓库路径
 
 ```sh
 node build.mjs --check   # client.js 必须与 src/ 一致
-node test.mjs            # 35 项离线测试
+node test.mjs            # 36 项离线测试
 npm pack --dry-run       # 看最终会进入 npm 包的文件列表
 ```
 
@@ -103,7 +103,8 @@ Initial release.
 
 ## 2. 发布到 npm
 
-> 常规流程：配好 `NPM_TOKEN` 后在 Actions 里手动 Run workflow，`release.yml` 完成发布（带 provenance）。
+> 常规流程：配好 Trusted Publishing（推荐，见第 5 节）或 `NPM_TOKEN` 后，在 Actions 里手动 Run workflow，
+> `release.yml` 完成发布（带 provenance）。
 > 想恢复 push 到 `main` 自动发布，把 `release.yml` 的 `on:` 加回 `push: branches: [main]` 即可。
 > 本节是**手动兜底**——Actions 不可用、或需要立即补发时使用。
 
@@ -230,7 +231,7 @@ CI 依次检查：条目数 → `dsh.bundle` → 仓库年龄 → awesome-lint /
 
 仓库带 `.github/workflows/release.yml`：目前由 Actions → release → **Run workflow** 触发，
 依次执行 **测试 → npm 发布 → 建 tag/Release → 提插件市场 PR**。每一步幂等，重跑安全。
-首版发布前需要在 GitHub 上配好两个 Secret（见第 5 节）；配好并验证后，若想改回
+首版发布前需要配好 npm 认证（Trusted Publishing 或 `NPM_TOKEN`）与 `MARKET_TOKEN`（见第 5 节）；配好并验证后，若想改回
 push 到 `main` 自动发布，恢复 `release.yml` 的 `push: branches: [main]` 触发即可。
 
 ```sh
@@ -266,26 +267,54 @@ git push origin main
 
 ---
 
-## 5. 自动化发布：前提与配置
+## 5. 自动化发布：Trusted Publishing（推荐）与 Secret
 
 两个工作流：
 
 | 文件 | 触发 | 作用 |
 |---|---|---|
 | `.github/workflows/test.yml` | 任意 push / PR | `node test.mjs` + `node build.mjs --check` |
-| `.github/workflows/release.yml` | 手动 Run workflow（Secret 配好后可恢复 push 到 `main`） | 测试 → npm 发布（provenance）→ GitHub Release → 市场 PR |
+| `.github/workflows/release.yml` | 手动 Run workflow（Secret 配好后可恢复 push 到 `main`） | 测试 → npm 发布（OIDC + provenance）→ GitHub Release → 市场 PR |
 
-发布工作流依赖两个仓库 Secret（Settings → Secrets and variables → Actions）：
+### 5.1 推荐：Trusted Publishing（不再需要 npm token）
+
+npm CLI 在 CI 里会**优先使用 OIDC**，配置一次后可以删掉 `NPM_TOKEN`。步骤：
+
+1. 打开 <https://www.npmjs.com/package/dsh-coding-sound> → 右上 **Settings** → **Trusted Publisher**
+2. **Select your publisher** 选 **GitHub Actions**，填：
+   - Organization or user：`mhlywxl`
+   - Repository：`dsh-coding-sound`
+   - Workflow filename：`release.yml`（只写文件名，不带路径）
+   - Environment name：留空
+   - **Allowed actions**：勾选 **`npm publish`**。2026-09-03 之后新建的配置默认只允许 `npm stage publish`，
+     不勾这一项时 `npm publish` 会被拒绝。
+3. 保存后删除仓库 Secret `NPM_TOKEN`，并到 npm 的 Access Tokens 里吊销旧 token。
+
+注意：
+
+- Trusted Publishing 需要 `npm` CLI ≥ 11.5.1、Node ≥ 22.14；`release.yml` 已固定 Node 24（自带 npm 11.x）。
+- 用 CLI 配置（`npm trust github ... --file release.yml --allow-publish`）要求**未启用 bypass 的 2FA 登录会话**；
+  bypass GAT 会被直接 403 拒绝。网页配置最省事。
+- 一个包最多 10 个受信发布者；配置建好后不能原地改，需要先 `npm trust revoke --id <id>` 再重建。
+- 发布后 npm 需要几分钟到最长约 1 小时处理新包；期间 registry 只显示 `0.0.0-stage` 占位版本，属正常现象，
+  处理完成会自动替换成真实版本。
+
+### 5.2 兼容方案：NPM_TOKEN
+
+Trusted Publishing 配好之前，可以用仓库 Secret 发版（Settings → Secrets and variables → Actions）：
 
 | Secret | 作用 | 生成方式 |
 |---|---|---|
-| `NPM_TOKEN` | 发 npm 包 | npmjs.com → Access Tokens → Granular Access Token（Read and write；2FA 账号需允许 CI 绕过，或改用 Automation token） |
-| `MARKET_TOKEN` | fork `awesome-dsh-plugin/awesome-dsh-plugin` 并开 PR | GitHub classic PAT，勾 `public_repo` |
+| `NPM_TOKEN` | 发 npm 包 | Granular Access Token：Read and write（publish and stage）、All packages、Bypass 2FA；有效期 ≤ 90 天 |
+| `MARKET_TOKEN` | fork `awesome-dsh-plugin/awesome-dsh-plugin` 并开 PR | GitHub classic PAT，只勾 `public_repo` |
 
-其他前置条件：
+> 带直接发布权限的 bypass token 将在 **2027 年 1 月**停止支持，届时必须使用 Trusted Publishing；
+> 另外这类 token 出现在日志或聊天里就应立刻吊销重发。
+
+### 5.3 其他前置条件与市场
 
 - 仓库必须是 **Public**（npm provenance 与市场收录都要求）；
-- 仓库需要有 `dsh-plugin` topic；市场 CI 还会检查仓库是否满 1 天（未满时 `catalog` 自动推迟，不会失败）；
+- 仓库需要 `dsh-plugin` topic；市场 CI 还会检查仓库是否满 1 天（未满时 `catalog` 自动推迟，不会失败）；
 - `package.json.repository` 必须指向本仓库，否则工作流在发布前直接报错；
 - `GITHUB_TOKEN` 由 Actions 自动提供，无需配置。
 
@@ -306,6 +335,8 @@ git push origin main
 | 市场安装后没有声音 | 打开浏览器控制台看 `[coding-sound]`；确认浏览器允许音频、页面有过一次点击（自动播放策略）；确认通知音量 > 0、对应选项不是「关闭」 |
 | 设置页没有「声音与提醒」 | 插件未启用或 Host 未重启；检查 `Settings → Plugins` 里 `dsh-coding-sound` 是否 enabled |
 | `dsh plugin add` 失败 | 确认包已发布且 `npm view dsh-coding-sound version` 有值；旧版本缓存可清 pnpm store 后重试 |
+| 发布后 npm 只显示 `0.0.0-stage` | npm 正在处理新包（首次最长约 1 小时）；占位版本会自动被真实版本替换，别在此期间判断失败 |
+| `npm trust` 报 403 | 该命令不接受 bypass GAT；改用网页 Settings → Trusted Publisher，或先 `npm login` 建立带 2FA 的会话 |
 | 发布后发现忘了改版本 | npm 不允许覆盖同一个版本号；`npm version patch` 后重新 `npm publish`，必要时 `npm deprecate` 旧版本 |
 | 误把 WAV 加回仓库 | 不要提交；当前实现全部合成，包内不应出现音频素材 |
 
@@ -319,7 +350,8 @@ git push origin main
 - [ ] `package.json` 已去掉 `private`，版本号正确
 - [ ] `repository` / `homepage` / `bugs` 已填，且与 GitHub 仓库一致
 - [ ] GitHub 仓库是 Public，有 `dsh-plugin` topic，Description 准确
-- [ ] `NPM_TOKEN`、`MARKET_TOKEN` 两个 Secret 已配置
+- [ ] Trusted Publisher 已绑定（或 `NPM_TOKEN` 仍有效），`MARKET_TOKEN` 已配置
+- [ ] 首次发布后等待 `0.0.0-stage` 被真实版本替换，再对外宣传
 - [ ] 手动 Run workflow 后 `release` 全绿；npm 上能看到该版本
 - [ ] 仓库满 1 天后重跑 workflow，`catalog` 给出市场 PR 链接
 - [ ] 合并后用干净 profile 安装验证；catalog PR 只新增一条自己的条目

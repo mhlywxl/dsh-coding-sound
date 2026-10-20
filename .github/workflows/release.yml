@@ -2,6 +2,10 @@ name: release
 
 # Manual run only for now: verify -> publish to npm -> GitHub Release -> plugin-market PR.
 #
+# npm auth: the publish job prefers Trusted Publishing (OIDC) whenever the
+# package has a trusted publisher bound to this repository; set NPM_TOKEN only
+# as a fallback until then (see PUBLISH.md section 5).
+#
 # The push trigger is intentionally off until the repository secrets
 # (NPM_TOKEN, MARKET_TOKEN) are configured; run it from Actions -> release ->
 # Run workflow or `gh workflow run release.yml`.
@@ -32,7 +36,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
       - name: client.js matches src/
         run: node build.mjs --check
       - name: offline tests
@@ -55,7 +59,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           registry-url: https://registry.npmjs.org
       - name: read package metadata
         id: meta

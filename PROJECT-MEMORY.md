@@ -28,29 +28,31 @@
 ## 项目
 
 - 名称：`dsh-coding-sound`（DeepSeek Harness 插件）
-- 路径：`D:\dev\harness\dsh-coding-sound`
+- 路径：仓库根目录 `dsh-coding-sound/`
 - 功能：生成式背景音乐 + 完成/审批/等待提示音 + 阶段声音（思考/回答/工具执行）+ 「声音与提醒」设置卡片
 - 对外定位（市场/README 用）：用声音盯住 Agent —— 不盯屏幕也能听出它在思考、仍在工作、还是在等你，从而减少「AI 在等人」、保持专注与效率
 - 版本：`0.1.0`；MIT；无第三方音频素材（全部 Web Audio 合成）
 - 安装：`dsh plugin --profile desktop add dsh-coding-sound`；本地开发用 `link:`
-- 构建 / 测试：`node build.mjs`、`node test.mjs`（35 项）
+- 构建 / 测试：`node build.mjs`、`node test.mjs`（36 项）
 - 发布步骤：见 [PUBLISH.md](PUBLISH.md)
 
 ## 发布流水线（CI）
 
 - `.github/workflows/test.yml`：任意 push / PR 跑 `node test.mjs` + `node build.mjs --check`。
-- `.github/workflows/release.yml`：手动 Run workflow（push 触发暂关，等 Secret 配好再恢复），四个幂等 job：
-  `verify`（构建一致性 + 35 项测试 + `npm pack --dry-run`）→ `publish`（版本已在 registry 则跳过，
-  `--provenance --access public`）→ `release`（建 `v<version>` tag 与 Release）→
+- `.github/workflows/release.yml`：手动 Run workflow（push 触发暂关；Trusted Publishing 配好后可按需恢复），四个幂等 job：
+  `verify`（构建一致性 + 36 项测试 + `npm pack --dry-run`）→ `publish`（版本已在 registry 则跳过，
+  优先 OIDC、无 token 时回退 `NPM_TOKEN`；`--provenance --access public`）→ `release`（建 `v<version>` tag 与 Release）→
   `catalog`（fork `awesome-dsh-plugin/awesome-dsh-plugin`，写 `data/plugins/<owner>__<repo>.yml`，开 PR）。
-- 需要的仓库 Secret：`NPM_TOKEN`（npm granular/automation token）、`MARKET_TOKEN`（classic PAT，
-  `public_repo`）。`GITHUB_TOKEN` 自动提供。仓库必须 Public；`package.json.repository` 必须与
-  `github.repository` 一致，否则 `publish` 前置检查直接失败。
+- npm 认证优先用 **Trusted Publishing**（npmjs.com → 包 Settings → Trusted Publisher → GitHub Actions，
+  workflow `release.yml`，勾 `npm publish`），配好后可删除 `NPM_TOKEN`；`MARKET_TOKEN`（classic PAT，
+  `public_repo`）仍需要。`GITHUB_TOKEN` 自动提供。仓库必须 Public；`package.json.repository` 必须与
+  `github.repository` 一致，否则 `publish` 前置检查直接失败。CI 用 Node 24（npm ≥ 11.5 才支持 OIDC）。
+- 首次发布后 registry 会先显示 `0.0.0-stage` 占位（最长约 1 小时），处理完才出现真实版本；不要在这期间判断失败。
 - 仓库创建不满 1 天时 `catalog` 不失败、只推迟（市场 CI 硬要求），Summary 里给重跑时间；
   仓库变量 `FORCE_CATALOG_PR=true` 可强制。条目已收录 / 已有 open PR 时同样跳过。
 - 版本迭代：`npm version patch --no-git-tag-version` → 提交 → push。不在本地 `npm publish`、
   不在本地打 `v*` tag（CI 会建）。
-- 手动步骤清单在**工作区根目录** `D:\dev\harness\GITHUB-SETUP.md`（有意不进仓库、不进 npm 包）。
+- 手动步骤清单在工作区根目录的 `GITHUB-SETUP.md`（有意不进仓库、不进 npm 包）。
 
 ## 关键决策
 
@@ -82,10 +84,12 @@
 - **设置导航图标**：宿主按 section id 硬编码图标，未知 id 用齿轮；插件在 label 内放扬声器图标，并用 `button:has(> span [data-coding-sound-nav]) > svg` 隐藏兜底齿轮。
 - **测试台**：`test.mjs` 用 Node 内置 `node:test`，无依赖；覆盖预设参数、设置归一化、去重、会话边沿、阶段相位、Host 无路由、构建产物的离线装配与渲染。
 
-## 上线待办
+## 上线状态（2026-10-20）
 
-- 刷新桌面页面，确认导航扬声器图标与三行阶段试听。
-- 建 GitHub 仓库（Public）、补 `repository` / `homepage` / `bugs`、加 `dsh-plugin` topic。（2026-10-20 已完成：`mhlywxl/dsh-coding-sound`）
-- 配 `NPM_TOKEN` 与 `MARKET_TOKEN` 两个 Secret，然后手动 Run workflow 触发 `release.yml`。
-- 仓库满 1 天后重跑 workflow 自动提市场 PR；合并后市场可见。
-- 可选：市场截图 `screenshots.json`（1–8 张图），以及 npm trusted publishing（可删掉 `NPM_TOKEN`）。
+- 已完成：GitHub 仓库 `mhlywxl/dsh-coding-sound`（Public、`dsh-plugin` topic、metadata 齐全）、
+  历史清理（无 `wuxl9`）、npm `dsh-coding-sound@0.1.0` 已发布（provenance）、`v0.1.0` Release、
+  `NPM_TOKEN` / `MARKET_TOKEN` 已配置、release 工作流手动触发验证通过。
+- 待办：在 npm 网页绑定 **Trusted Publisher**（需要 2FA，bypass GAT 无法配置），然后删掉
+  `NPM_TOKEN` 并吊销旧 token；轮换 `MARKET_TOKEN`（它曾出现在聊天记录里）。
+- 市场：仓库满 1 天后（2026-10-21 09:15 UTC 之后）重跑 release，让 `catalog` 提市场 PR；合并后市场可见。
+- 可选：市场截图 `screenshots.json`（1–8 张图）。
