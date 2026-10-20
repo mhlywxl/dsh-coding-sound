@@ -31,7 +31,7 @@
 - 路径：仓库根目录 `dsh-coding-sound/`
 - 功能：生成式背景音乐 + 完成/审批/等待提示音 + 阶段声音（思考/回答/工具执行）+ 「声音与提醒」设置卡片
 - 对外定位（市场/README 用）：用声音盯住 Agent —— 不盯屏幕也能听出它在思考、仍在工作、还是在等你，从而减少「AI 在等人」、保持专注与效率
-- 版本：`0.1.0`；MIT；无第三方音频素材（全部 Web Audio 合成）
+- 版本：`0.1.2`；MIT；无第三方音频素材（全部 Web Audio 合成）
 - 安装：`dsh plugin --profile desktop add dsh-coding-sound`；本地开发用 `link:`
 - 构建 / 测试：`node build.mjs`、`node test.mjs`（38 项）
 - 发布步骤：见 [PUBLISH.md](PUBLISH.md)
@@ -91,7 +91,7 @@
 ## 上线状态（2026-10-20）
 
 - 已完成：GitHub 仓库 `mhlywxl/dsh-coding-sound`（Public、`dsh-plugin` topic、metadata 齐全）、
-  历史清理（无 `wuxl9`）、npm `0.1.0` / `0.1.1` 已发布（provenance）、`v0.1.0` / `v0.1.1` Release、
+  历史清理（无 `wuxl9`）、npm `0.1.0` → `0.1.1` → `0.1.2` 已发布（provenance）、`v0.1.0` / `v0.1.1` / `v0.1.2` Release、
   `MARKET_TOKEN` 已配置、release 工作流（Node 24）手动触发验证通过。
 - **Trusted Publisher 已配置，但被 npm 的已知 bug 阻塞**：2026-07-15 后创建的 GitHub 仓库使用 immutable
   OIDC subject claims，npm 的 token 交换返回 `OIDC token exchange error - package not found`
