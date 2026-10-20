@@ -290,7 +290,7 @@ jobs:
 
           ## Checks
 
-          - \`node build.mjs --check\` and \`node test.mjs\` (33 offline tests) run before every publish.
+          - \`node build.mjs --check\` and \`node test.mjs\` (35 offline tests) run before every publish.
           - \`package.json\` declares \`dsh.bundle.patch\` and \`dsh.client\`; \`cordis.patch.yml\` sits at the repository root.
           - Tested on Windows 11 with DeepSeek Harness desktop 0.2.1-rc.2; the audio code uses only platform-neutral Web Audio and DOM APIs.
           BODY

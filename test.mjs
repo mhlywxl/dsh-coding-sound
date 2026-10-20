@@ -660,6 +660,84 @@ test("the tool phase can be silenced or sped up", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Density → live tempo
+// ---------------------------------------------------------------------------
+
+const musicModule = graph.load("engine");
+
+test("a density maps to one note spacing, shared by the stream and the audition", () => {
+  assert.equal(musicModule.densityIntervalMs(1), 100, "the floor keeps a 1-character beat from stacking");
+  assert.equal(musicModule.densityIntervalMs(2), 120);
+  assert.equal(musicModule.densityIntervalMs(3), 150);
+  assert.equal(musicModule.densityIntervalMs(4), 180);
+  assert.equal(musicModule.densityIntervalMs(6), 240);
+  assert.equal(musicModule.densityIntervalMs(8), 300);
+  assert.equal(musicModule.densityIntervalMs(undefined), 180, "an absent density means the default 4 characters per beat");
+  assert.equal(musicModule.densityIntervalMs(0), 100);
+  assert.equal(musicModule.densityIntervalMs(99), 300);
+});
+
+test("the density setting paces the live stream, not just the 试听 phrase", () => {
+  // Real streaming delivers several characters per DOM flush, so the character
+  // gate alone once left the tempo to the flush cadence: the setting only
+  // changed 试听. The stream must now follow it too.
+  const rate = (density) => liveNoteRate(density);
+  const dense = rate(2);
+  const medium = rate(4);
+  const sparse = rate(8);
+  assert.ok(dense >= 6, `density 2 should be lively, got ${dense.toFixed(1)}/s`);
+  assert.ok(medium < dense, `density 4 (${medium.toFixed(1)}/s) must be slower than 2 (${dense.toFixed(1)}/s)`);
+  assert.ok(sparse <= 4.5, `density 8 should be sparse, got ${sparse.toFixed(1)}/s`);
+  assert.ok(medium > sparse, `density 4 (${medium.toFixed(1)}/s) must be faster than 8 (${sparse.toFixed(1)}/s)`);
+});
+
+/** Note rate of a fast text stream at one density, over three seconds. */
+function liveNoteRate(density, { chunk = 3, everyMs = 40, durationMs = 3000 } = {}) {
+  let now = 0;
+  let oscillators = 0;
+  const Param = () => ({
+    value: 0,
+    setValueAtTime(value) { this.value = value; return this; },
+    linearRampToValueAtTime(value) { this.value = value; return this; },
+    exponentialRampToValueAtTime(value) { this.value = value; return this; },
+    cancelScheduledValues() { return this; },
+  });
+  const node = () => ({
+    gain: Param(), frequency: Param(), Q: Param(), buffer: null,
+    connect() { return this; }, disconnect() {}, start() {}, stop() {},
+  });
+  class Context {
+    constructor() { this.state = "running"; this.currentTime = 0; this.sampleRate = 48000; this.destination = node(); }
+    createGain() { return node(); }
+    createOscillator() { oscillators += 1; return node(); }
+    createBiquadFilter() { return node(); }
+    createConvolver() { return node(); }
+    createBuffer(channels, length) {
+      const data = Array.from({ length: channels }, () => new Float32Array(length));
+      return { getChannelData: (channel) => data[channel] };
+    }
+    resume() { return Promise.resolve(); }
+    close() { return Promise.resolve(); }
+  }
+  const music = new musicModule.MusicEngine({ bus: new musicModule.AudioBus(Context), clock: () => now });
+  const value = { ...settings.DEFAULTS, thinkingDensity: density, answerDensity: density };
+  const voices = new sessions.SessionVoices({
+    engine: music,
+    chimes: { play: async () => true },
+    getSettings: () => value,
+    getCurrentId: () => "a",
+    clock: () => now,
+  });
+  voices.apply(new Map([["a", { running: true }]]));
+  const before = oscillators;
+  for (let elapsed = 0; elapsed < durationMs; elapsed += everyMs) {
+    voices.onCurrentCharacters("x".repeat(chunk), "thinking");
+    now = elapsed + everyMs;
+  }
+  return (oscillators - before) / (durationMs / 1000);
+}
+
+// ---------------------------------------------------------------------------
 // Observer
 // ---------------------------------------------------------------------------
 

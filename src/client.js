@@ -708,14 +708,16 @@ function apply(ctx) {
     previewPhase: (phase) => {
       const settingsValue = store.get();
       void bus.resume();
+      // The audition is paced by the same interval the live stream uses, so it
+      // predicts what the setting will actually sound like during a turn.
       if (phase === "thinking") {
         if (!settingsValue.thinkingSound) return;
-        music.previewPhrase({ pitch: settingsValue.thinkingPitch, intervalMs: 60 + settingsValue.thinkingDensity * 30, count: 4 });
+        music.previewPhrase({ pitch: settingsValue.thinkingPitch, density: settingsValue.thinkingDensity, count: 4 });
         return;
       }
       if (phase === "answer") {
         if (!settingsValue.answerSound) return;
-        music.previewPhrase({ pitch: settingsValue.answerPitch, intervalMs: 60 + settingsValue.answerDensity * 30, count: 4 });
+        music.previewPhrase({ pitch: settingsValue.answerPitch, density: settingsValue.answerDensity, count: 4 });
         return;
       }
       const interval = TOOL_PULSE_INTERVALS[settingsValue.toolSound];

@@ -806,6 +806,35 @@ window.__ModuleLoader__.load({
         const DEFAULT_PRESET = "ethereal";
 
         /**
+         * Spacing of one density step, shared by the live beat and the phase audition.
+         *
+         * The density setting is "characters per beat", but a streamed answer reaches
+         * the page several characters per DOM flush, so the character gate on its own
+         * cannot set the tempo: with a fixed floor the note rate was whatever the flush
+         * cadence happened to be, and changing the setting was inaudible while the
+         * audition (which used this spacing) responded. The live beat therefore uses the
+         * same spacing, so the setting is heard everywhere and the audition predicts the
+         * stream.
+         */
+        const BEAT_INTERVAL_BASE_MS = 60;
+        const BEAT_INTERVAL_STEP_MS = 30;
+        /** Densities the setting offers; anything else is clamped into this range. */
+        const MIN_DENSITY = 1;
+        const MAX_DENSITY = 8;
+
+        /**
+         * Minimum gap between two text-driven notes at one density, in milliseconds.
+         * Never faster than {@link MIN_BEAT_INTERVAL_MS}, so a burst of characters can
+         * still not stack notes.
+         */
+        function densityIntervalMs(density) {
+          const beats = Number.isFinite(density)
+            ? Math.min(MAX_DENSITY, Math.max(MIN_DENSITY, Math.round(density)))
+            : TOKENS_PER_BEAT;
+          return Math.max(MIN_BEAT_INTERVAL_MS, BEAT_INTERVAL_BASE_MS + beats * BEAT_INTERVAL_STEP_MS);
+        }
+
+        /**
          * Owns the page's single `AudioContext` and the first-gesture unlock.
          *
          * Opening a context outside a user gesture is allowed but starts it suspended;
@@ -1025,11 +1054,12 @@ window.__ModuleLoader__.load({
           /**
            * Feed streamed characters into one session's beat counter.
            *
-           * Double throttling, copied from the reference: one beat per
-           * `charactersPerBeat` characters, and never two beats closer than
-           * {@link MIN_BEAT_INTERVAL_MS}. Characters that arrive during the throttle
-           * are dropped rather than queued, which is what keeps the music on the text
-           * that is being typed now instead of trailing it.
+           * Two gates: one beat per `charactersPerBeat` characters, and never two beats
+           * closer than that density's own spacing ({@link densityIntervalMs}) — the
+           * same spacing the phase audition uses, so the setting is audible on the live
+           * stream and not only in 试听. Characters that arrive during the throttle are
+           * dropped rather than queued, which is what keeps the music on the text that
+           * is being typed now instead of trailing it.
            *
            * @param {string} sessionId
            * @param {number} characters
@@ -1046,7 +1076,7 @@ window.__ModuleLoader__.load({
             if (this.chain === null || this.bus.audio === null) return false;
             if (!Number.isFinite(characters) || characters <= 0) return false;
             const perBeat = Number.isFinite(options.charactersPerBeat)
-              ? Math.min(8, Math.max(1, Math.round(options.charactersPerBeat)))
+              ? Math.min(MAX_DENSITY, Math.max(MIN_DENSITY, Math.round(options.charactersPerBeat)))
               : TOKENS_PER_BEAT;
             const phase = typeof options.phase === "string" ? options.phase : "answer";
             if (this.carryPhase.get(sessionId) !== phase) {
@@ -1061,7 +1091,7 @@ window.__ModuleLoader__.load({
             }
             this.carry.set(sessionId, carry % perBeat);
             const now = this.clock();
-            if (now - (this.lastBeat.get(sessionId) ?? -Infinity) < MIN_BEAT_INTERVAL_MS) return false;
+            if (now - (this.lastBeat.get(sessionId) ?? -Infinity) < densityIntervalMs(perBeat)) return false;
             this.lastBeat.set(sessionId, now);
             return this.#playNote(options.velocity ?? 1, options.pitch ?? "normal");
           }
@@ -1115,7 +1145,9 @@ window.__ModuleLoader__.load({
            * running session and while the music preset is `off` (the default preset is
            * used then), so a phase can be heard before it ever plays live.
            *
-           * @param {{count?: number, intervalMs?: number, velocity?: number, pitch?: "low"|"normal"|"high"}} [options]
+           * @param {{count?: number, intervalMs?: number, density?: number, velocity?: number, pitch?: "low"|"normal"|"high"}} [options]
+           *   `density` paces the phrase exactly like the live beat of that phase;
+           *   `intervalMs` overrides it for callers that pace by time (the tool pulse).
            */
           previewPhrase(options = {}) {
             const config = presetConfig(this.preset) ?? presetConfig(DEFAULT_PRESET);
@@ -1127,7 +1159,9 @@ window.__ModuleLoader__.load({
             }
             void this.bus.resume();
             const count = Number.isFinite(options.count) ? Math.min(8, Math.max(1, Math.round(options.count))) : 4;
-            const intervalMs = Number.isFinite(options.intervalMs) ? Math.min(600, Math.max(40, Math.round(options.intervalMs))) : 160;
+            const intervalMs = Number.isFinite(options.intervalMs)
+              ? Math.min(600, Math.max(40, Math.round(options.intervalMs)))
+              : densityIntervalMs(Number.isFinite(options.density) ? options.density : TOKENS_PER_BEAT);
             const velocity = Number.isFinite(options.velocity) ? Math.min(1, Math.max(0, options.velocity)) : 1;
             const shift = options.pitch === "low" ? 0.5 : options.pitch === "high" ? 2 : 1;
             try {
@@ -1369,6 +1403,11 @@ window.__ModuleLoader__.load({
 
         module.exports = {
           DEFAULT_PRESET,
+          BEAT_INTERVAL_BASE_MS,
+          BEAT_INTERVAL_STEP_MS,
+          MIN_DENSITY,
+          MAX_DENSITY,
+          densityIntervalMs,
           AudioBus,
           MusicEngine,
         };
@@ -2793,14 +2832,16 @@ window.__ModuleLoader__.load({
             previewPhase: (phase) => {
               const settingsValue = store.get();
               void bus.resume();
+              // The audition is paced by the same interval the live stream uses, so it
+              // predicts what the setting will actually sound like during a turn.
               if (phase === "thinking") {
                 if (!settingsValue.thinkingSound) return;
-                music.previewPhrase({ pitch: settingsValue.thinkingPitch, intervalMs: 60 + settingsValue.thinkingDensity * 30, count: 4 });
+                music.previewPhrase({ pitch: settingsValue.thinkingPitch, density: settingsValue.thinkingDensity, count: 4 });
                 return;
               }
               if (phase === "answer") {
                 if (!settingsValue.answerSound) return;
-                music.previewPhrase({ pitch: settingsValue.answerPitch, intervalMs: 60 + settingsValue.answerDensity * 30, count: 4 });
+                music.previewPhrase({ pitch: settingsValue.answerPitch, density: settingsValue.answerDensity, count: 4 });
                 return;
               }
               const interval = TOOL_PULSE_INTERVALS[settingsValue.toolSound];

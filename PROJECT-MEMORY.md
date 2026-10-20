@@ -32,14 +32,14 @@
 - 功能：生成式背景音乐 + 完成/等待通知音效 + 阶段声音设置 + 声音设置卡片
 - 版本：`0.1.0`；MIT；无第三方音频素材（全部 Web Audio 合成）
 - 安装：`dsh plugin --profile desktop add dsh-coding-sound`；本地开发用 `link:`
-- 构建 / 测试：`node build.mjs`、`node test.mjs`（33 项）
+- 构建 / 测试：`node build.mjs`、`node test.mjs`（35 项）
 - 发布步骤：见 [PUBLISH.md](PUBLISH.md)
 
 ## 发布流水线（CI）
 
 - `.github/workflows/test.yml`：任意 push / PR 跑 `node test.mjs` + `node build.mjs --check`。
 - `.github/workflows/release.yml`：push `main` 或手动 Run workflow，四个幂等 job：
-  `verify`（构建一致性 + 33 项测试 + `npm pack --dry-run`）→ `publish`（版本已在 registry 则跳过，
+  `verify`（构建一致性 + 35 项测试 + `npm pack --dry-run`）→ `publish`（版本已在 registry 则跳过，
   `--provenance --access public`）→ `release`（建 `v<version>` tag 与 Release）→
   `catalog`（fork `awesome-dsh-plugin/awesome-dsh-plugin`，写 `data/plugins/<owner>__<repo>.yml`，开 PR）。
 - 需要的仓库 Secret：`NPM_TOKEN`（npm granular/automation token）、`MARKET_TOKEN`（classic PAT，
@@ -57,6 +57,9 @@
 - **设置保存在浏览器**（`localStorage` 键 `dsh:coding-sound:v1`），不是 Host `Config`；`SettingsStore` 已预留 Host 默认值基线。
 - **阶段声音**：
   - 思考 / 回答按字数密度（默认 2 / 4 字一拍）+ 音高（低/标准/高）+ 独立开关；
+  - **密度同时决定出音间隔**：`max(100, 60 + 30 × 密度) ms`，与试听共用 `engine.densityIntervalMs`。
+    2026-10-20 修复：此前只有「字数门槛 + 固定 100 ms 节流」，而真实流式一次 flush 就带来好几个字符，
+    出音速度实际由 flush 频率决定 —— 改密度只有试听有变化，实际运行听不出来；
   - 工具执行按“当前会话空闲 1.2 s 后”的工作脉冲（慢 1.4 s / 标准 0.9 s / 快 0.55 s / 关闭）；
   - 被关闭阶段的文字仍算活动，工作脉冲不会补进来。
 - **非当前会话**用环境脉冲（0.7–1.1 s），因为浏览器只能看到当前会话的 DOM，拿不到其它会话的逐 token 信号。
