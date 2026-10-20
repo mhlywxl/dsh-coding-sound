@@ -28,10 +28,15 @@ const PITCH_IDS = ["low", "normal", "high"];
 const DENSITY_VALUES = [1, 2, 3, 4, 6, 8];
 /**
  * Tool/idle pulse rates, in milliseconds between pulses. `off` silences the
- * phase. Six steps instead of the old 慢/标准/快, so the pulse is tunable like
- * the text phases, and a separate pitch transposes it.
+ * phase. Ten steps instead of the old 慢/标准/快, from the fastest text beat
+ * (100 ms, which is what `density = 1` plays) up to a once-every-2-seconds
+ * heartbeat, and a separate pitch transposes it.
  */
 const TOOL_PULSE_INTERVALS = Object.freeze({
+  100: 100,
+  150: 150,
+  200: 200,
+  300: 300,
   400: 400,
   600: 600,
   900: 900,

@@ -185,10 +185,15 @@ window.__ModuleLoader__.load({
         const DENSITY_VALUES = [1, 2, 3, 4, 6, 8];
         /**
          * Tool/idle pulse rates, in milliseconds between pulses. `off` silences the
-         * phase. Six steps instead of the old 慢/标准/快, so the pulse is tunable like
-         * the text phases, and a separate pitch transposes it.
+         * phase. Ten steps instead of the old 慢/标准/快, from the fastest text beat
+         * (100 ms, which is what `density = 1` plays) up to a once-every-2-seconds
+         * heartbeat, and a separate pitch transposes it.
          */
         const TOOL_PULSE_INTERVALS = Object.freeze({
+          100: 100,
+          150: 150,
+          200: 200,
+          300: 300,
           400: 400,
           600: 600,
           900: 900,
@@ -1756,22 +1761,24 @@ window.__ModuleLoader__.load({
         /** A non-current session's ambience: one beat every 700–1100 ms. */
         const OTHER_SESSION_PULSE_MIN_MS = 700;
         const OTHER_SESSION_PULSE_SPREAD_MS = 400;
-        /** How often the pulse scheduler wakes up, in milliseconds. */
-        const PULSE_TICK_MS = 250;
+        /**
+         * How often the pulse scheduler wakes up, in milliseconds. It must stay well
+         * below the fastest tool rate (100 ms) or the scheduler, not the setting, would
+         * decide how fast the pulse runs.
+         */
+        const PULSE_TICK_MS = 50;
 
         /**
          * The current session's working pulse.
          *
          * Reasoning streams token by token and drives notes on its own; tool execution
          * and long pauses do not produce text at all. Once the current answer has been
-         * quiet for {@link WORKING_PULSE_IDLE_MS}, a soft note at the speed selected by
-         * the `toolSound` setting keeps "still working" audible — the same idea as the
-         * non-current ambience, at the current-session volume and a lower velocity so
-         * it reads as a pulse rather than another token.
+         * quiet for {@link WORKING_PULSE_IDLE_MS}, a note at the rate selected by the
+         * `toolSound` setting keeps "still working" audible — the same idea as the
+         * non-current ambience, at the current-session volume and, like a text beat, at
+         * full velocity.
          */
         const WORKING_PULSE_IDLE_MS = 1200;
-        /** Velocity of a working pulse relative to a text-driven beat. */
-        const WORKING_PULSE_VELOCITY = 0.55;
 
         const APPROVAL_KINDS = new Set(["approval", "approval_request", "approval-request"]);
         const ASK_KINDS = new Set(["ask", "ask_request", "ask-request", "question", "user-question", "user_question"]);
@@ -2111,7 +2118,7 @@ window.__ModuleLoader__.load({
                 const lastPulse = this.lastWorkingPulse.get(id);
                 if (lastPulse !== undefined && now - lastPulse < interval) continue;
                 this.lastWorkingPulse.set(id, now);
-                this.engine.pulse(id, { velocity: WORKING_PULSE_VELOCITY, pitch: settingsValue.toolPitch });
+                this.engine.pulse(id, { pitch: settingsValue.toolPitch });
                 continue;
               }
               const last = this.lastPulse.get(id);
@@ -2133,7 +2140,6 @@ window.__ModuleLoader__.load({
           OTHER_SESSION_PULSE_SPREAD_MS,
           PULSE_TICK_MS,
           WORKING_PULSE_IDLE_MS,
-          WORKING_PULSE_VELOCITY,
           pendingIdentity,
           stableSignature,
           normalizeEntry,
@@ -2890,7 +2896,6 @@ window.__ModuleLoader__.load({
               music.previewPhrase({
                 count: toolPreviewNotes(interval),
                 intervalMs: interval,
-                velocity: 0.55,
                 pitch: settingsValue.toolPitch,
               });
             },

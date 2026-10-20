@@ -237,8 +237,15 @@ test("per-phase defaults, clamping, and merging", () => {
   assert.equal(settings.DEFAULTS.toolPitch, "normal");
   assert.deepEqual([...settings.DENSITY_VALUES], [1, 2, 3, 4, 6, 8]);
   assert.deepEqual([...settings.PITCH_IDS], ["low", "normal", "high"]);
-  assert.deepEqual([...settings.TOOL_SPEED_IDS], ["off", "400", "600", "900", "1200", "1600", "2000"]);
-  assert.deepEqual({ ...settings.TOOL_PULSE_INTERVALS }, { 400: 400, 600: 600, 900: 900, 1200: 1200, 1600: 1600, 2000: 2000 });
+  assert.deepEqual(
+    [...settings.TOOL_SPEED_IDS],
+    ["off", "100", "150", "200", "300", "400", "600", "900", "1200", "1600", "2000"],
+  );
+  assert.deepEqual(
+    { ...settings.TOOL_PULSE_INTERVALS },
+    { 100: 100, 150: 150, 200: 200, 300: 300, 400: 400, 600: 600, 900: 900, 1200: 1200, 1600: 1600, 2000: 2000 },
+  );
+  assert.equal(settings.normalizeSettings({ toolSound: "100" }).toolSound, "100");
 
   assert.equal(settings.normalizeSettings({ thinkingSound: false }).thinkingSound, false);
   assert.equal(settings.normalizeSettings({ thinkingDensity: 0 }).thinkingDensity, 1);
@@ -574,7 +581,7 @@ test("text in the current answer drives beats; background sessions get a slow pu
   assert.equal(after, before, "the ambience pulse respects its 700–1100 ms gap");
 });
 
-test("a quiet working pulse keeps the current session audible during tools and pauses", () => {
+test("a full-velocity working pulse keeps the current session audible during tools and pauses", () => {
   let now = 0;
   const { engine, voices } = buildVoices({ clock: () => now });
   voices.apply(new Map([["a", { running: true }]]));
@@ -587,7 +594,8 @@ test("a quiet working pulse keeps the current session audible during tools and p
 
   now = sessions.WORKING_PULSE_IDLE_MS + 100;
   voices.tick();
-  assert.deepEqual(pulses(), [["pulse", "a", { velocity: sessions.WORKING_PULSE_VELOCITY, pitch: "normal" }]]);
+  // No `velocity`: the pulse sounds at the same level as a text beat.
+  assert.deepEqual(pulses(), [["pulse", "a", { pitch: "normal" }]]);
 
   now += settings.TOOL_PULSE_INTERVALS["900"] - 100;
   voices.tick();
@@ -663,13 +671,27 @@ test("the tool phase can be silenced, retimed and transposed", () => {
   now = sessions.WORKING_PULSE_IDLE_MS + 100;
   fast.voices.tick();
   const first = fast.engine.calls.filter((call) => call[0] === "pulse");
-  assert.deepEqual(first, [["pulse", "a", { velocity: sessions.WORKING_PULSE_VELOCITY, pitch: "high" }]]);
+  assert.deepEqual(first, [["pulse", "a", { pitch: "high" }]]);
   now += settings.TOOL_PULSE_INTERVALS["600"] - 100;
   fast.voices.tick();
   assert.equal(fast.engine.calls.filter((call) => call[0] === "pulse").length, 1, "the 600 ms rate is respected");
   now += 200;
   fast.voices.tick();
   assert.equal(fast.engine.calls.filter((call) => call[0] === "pulse").length, 2);
+
+  // The fastest step is 100 ms, the same spacing the densest text phase plays
+  // at; the scheduler must be quick enough to honour it (it used to tick every
+  // 250 ms, which silently capped the rate at four pulses a second).
+  now = 0;
+  const rapid = buildVoices({ clock: () => now, settings: { ...settings.DEFAULTS, toolSound: "100" } });
+  rapid.voices.apply(new Map([["a", { running: true }]]));
+  const rapidBeats = () => rapid.engine.calls.filter((call) => call[0] === "pulse").length;
+  for (let elapsed = 0; elapsed <= sessions.WORKING_PULSE_IDLE_MS + 800; elapsed += sessions.PULSE_TICK_MS) {
+    now = elapsed;
+    rapid.voices.tick();
+  }
+  // ~800 ms of pulsing at 100 ms is eight beats; a 250 ms scheduler yields three.
+  assert.ok(rapidBeats() >= 6, `a 100 ms pulse must keep up, got ${rapidBeats()} beats`);
 
   // Every offered rate is a distinct interval; two very different settings run
   // the pulse at visibly different speeds.
@@ -1091,13 +1113,13 @@ test("the built client module applies cleanly against a fake runtime", () => {
     const toolRate = toolControls[0];
     assert.equal(toolRate.props.value, "900");
     const toolOptions = toolRate.children[0];
-    assert.equal(toolOptions.length, 6);
+    assert.equal(toolOptions.length, 10);
     assert.deepEqual(
       toolOptions.map((option) => option.props.value),
-      ["400", "600", "900", "1200", "1600", "2000"],
+      ["100", "150", "200", "300", "400", "600", "900", "1200", "1600", "2000"],
     );
-    assert.match(toolOptions[0].children[0], /^0\.4 /);
-    assert.match(toolOptions[5].children[0], /^2 /);
+    assert.match(toolOptions[0].children[0], /^0\.1 /);
+    assert.match(toolOptions[9].children[0], /^2 /);
     assert.equal(toolControls[1].props.value, "normal");
 
     // Auditioning a phase works even before a session runs.

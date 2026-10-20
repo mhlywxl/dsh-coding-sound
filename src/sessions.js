@@ -25,22 +25,24 @@ const SUCCESS_CHIME_DEBOUNCE_MS = 320;
 /** A non-current session's ambience: one beat every 700–1100 ms. */
 const OTHER_SESSION_PULSE_MIN_MS = 700;
 const OTHER_SESSION_PULSE_SPREAD_MS = 400;
-/** How often the pulse scheduler wakes up, in milliseconds. */
-const PULSE_TICK_MS = 250;
+/**
+ * How often the pulse scheduler wakes up, in milliseconds. It must stay well
+ * below the fastest tool rate (100 ms) or the scheduler, not the setting, would
+ * decide how fast the pulse runs.
+ */
+const PULSE_TICK_MS = 50;
 
 /**
  * The current session's working pulse.
  *
  * Reasoning streams token by token and drives notes on its own; tool execution
  * and long pauses do not produce text at all. Once the current answer has been
- * quiet for {@link WORKING_PULSE_IDLE_MS}, a soft note at the speed selected by
- * the `toolSound` setting keeps "still working" audible — the same idea as the
- * non-current ambience, at the current-session volume and a lower velocity so
- * it reads as a pulse rather than another token.
+ * quiet for {@link WORKING_PULSE_IDLE_MS}, a note at the rate selected by the
+ * `toolSound` setting keeps "still working" audible — the same idea as the
+ * non-current ambience, at the current-session volume and, like a text beat, at
+ * full velocity.
  */
 const WORKING_PULSE_IDLE_MS = 1200;
-/** Velocity of a working pulse relative to a text-driven beat. */
-const WORKING_PULSE_VELOCITY = 0.55;
 
 const APPROVAL_KINDS = new Set(["approval", "approval_request", "approval-request"]);
 const ASK_KINDS = new Set(["ask", "ask_request", "ask-request", "question", "user-question", "user_question"]);
@@ -380,7 +382,7 @@ class SessionVoices {
         const lastPulse = this.lastWorkingPulse.get(id);
         if (lastPulse !== undefined && now - lastPulse < interval) continue;
         this.lastWorkingPulse.set(id, now);
-        this.engine.pulse(id, { velocity: WORKING_PULSE_VELOCITY, pitch: settingsValue.toolPitch });
+        this.engine.pulse(id, { pitch: settingsValue.toolPitch });
         continue;
       }
       const last = this.lastPulse.get(id);
@@ -402,7 +404,6 @@ module.exports = {
   OTHER_SESSION_PULSE_SPREAD_MS,
   PULSE_TICK_MS,
   WORKING_PULSE_IDLE_MS,
-  WORKING_PULSE_VELOCITY,
   pendingIdentity,
   stableSignature,
   normalizeEntry,

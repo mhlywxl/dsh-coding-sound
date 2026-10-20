@@ -742,7 +742,6 @@ function apply(ctx) {
       music.previewPhrase({
         count: toolPreviewNotes(interval),
         intervalMs: interval,
-        velocity: 0.55,
         pitch: settingsValue.toolPitch,
       });
     },
