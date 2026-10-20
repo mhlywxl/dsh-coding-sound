@@ -238,7 +238,7 @@ dsh-coding-sound/
 
 ## 同作者的其他插件
 
-- **DSH 分屏工作区**（`dsh-split-workspace`，开发中，尚未发布）— 把 DSH 会话区拆成最多四个原生窗格，每个窗格都是独立会话，拥有自己的输入框、流式输出、审批与视图页。
+- **[DSH 分屏工作区](https://github.com/mhlywxl/dsh-split-workspace)**（`dsh-split-workspace`）— 把 DSH 会话区拆成任意数量的原生窗格：左右、上下、田字 2×2 与自动网格，每个窗格都是独立会话。
 
 ## 支持作者
 
