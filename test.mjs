@@ -234,6 +234,7 @@ test("per-phase defaults, clamping, and merging", () => {
   assert.equal(settings.DEFAULTS.answerDensity, 4);
   assert.equal(settings.DEFAULTS.answerPitch, "normal");
   assert.equal(settings.DEFAULTS.toolSound, "900");
+  assert.equal(settings.DEFAULTS.toolRandom, true);
   assert.equal(settings.DEFAULTS.toolPitch, "normal");
   assert.deepEqual([...settings.DENSITY_VALUES], [1, 2, 3, 4, 6, 8]);
   assert.deepEqual([...settings.PITCH_IDS], ["low", "normal", "high"]);
@@ -246,6 +247,8 @@ test("per-phase defaults, clamping, and merging", () => {
     { 100: 100, 150: 150, 200: 200, 300: 300, 400: 400, 600: 600, 900: 900, 1200: 1200, 1600: 1600, 2000: 2000 },
   );
   assert.equal(settings.normalizeSettings({ toolSound: "100" }).toolSound, "100");
+  assert.equal(settings.normalizeSettings({ toolRandom: false }).toolRandom, false);
+  assert.equal(settings.normalizeSettings({ toolRandom: "random" }).toolRandom, true);
 
   assert.equal(settings.normalizeSettings({ thinkingSound: false }).thinkingSound, false);
   assert.equal(settings.normalizeSettings({ thinkingDensity: 0 }).thinkingDensity, 1);
@@ -634,6 +637,26 @@ test("the working pulse jitters like typing instead of ticking like a metronome"
   assert.ok(normal.every((gap) => gap >= 585 && gap <= 1215));
   // The fastest setting still clips at the 100 ms floor.
   assert.equal(sessions.toolPulseGap(100, () => 0), 100);
+});
+
+test("the tool phase can switch the random jitter off", () => {
+  let now = 0;
+  const { engine, voices } = buildVoices({
+    clock: () => now,
+    settings: { ...settings.DEFAULTS, toolSound: "600", toolRandom: false },
+  });
+  voices.apply(new Map([["a", { running: true }]]));
+  const beats = () => engine.calls.filter((call) => call[0] === "pulse").length;
+
+  now = sessions.WORKING_PULSE_IDLE_MS + 100;
+  voices.tick();
+  assert.equal(beats(), 1);
+  now += 599;
+  voices.tick();
+  assert.equal(beats(), 1, "no jitter: the exact pace holds");
+  now += 1;
+  voices.tick();
+  assert.equal(beats(), 2);
 });
 
 test("a waiting session never pulses", () => {

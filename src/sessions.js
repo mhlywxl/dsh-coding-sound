@@ -414,8 +414,10 @@ class SessionVoices {
         const due = this.nextWorkingPulse.get(id);
         if (due !== undefined && now < due) continue;
         // Draw the next gap now, so a pulse cannot drift with the tick cadence
-        // and every gap is sized from the current `toolSound` setting.
-        this.nextWorkingPulse.set(id, now + toolPulseGap(interval, this.random));
+        // and every gap is sized from the current `toolSound` setting. `toolRandom`
+        // turns the typewriter jitter off, leaving the plain metronome pace.
+        const gap = settingsValue.toolRandom === false ? interval : toolPulseGap(interval, this.random);
+        this.nextWorkingPulse.set(id, now + gap);
         this.engine.pulse(id, { pitch: settingsValue.toolPitch });
         continue;
       }

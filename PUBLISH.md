@@ -27,7 +27,7 @@ cd /path/to/dsh-coding-sound    # 换成你的仓库路径
 
 ```sh
 node build.mjs --check   # client.js 必须与 src/ 一致
-node test.mjs            # 37 项离线测试
+node test.mjs            # 38 项离线测试
 npm pack --dry-run       # 看最终会进入 npm 包的文件列表
 ```
 

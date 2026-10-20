@@ -224,6 +224,7 @@ window.__ModuleLoader__.load({
           "answerDensity",
           "answerPitch",
           "toolSound",
+          "toolRandom",
           "toolPitch",
         ];
 
@@ -250,6 +251,7 @@ window.__ModuleLoader__.load({
           answerDensity: 4,
           answerPitch: "normal",
           toolSound: "900",
+          toolRandom: true,
           toolPitch: "normal",
         });
 
@@ -344,6 +346,7 @@ window.__ModuleLoader__.load({
             answerDensity: normalizeDensity(source.answerDensity, DEFAULTS.answerDensity),
             answerPitch: normalizePitch(source.answerPitch, DEFAULTS.answerPitch),
             toolSound: normalizeToolSpeed(source.toolSound, DEFAULTS.toolSound),
+            toolRandom: bool(source.toolRandom, DEFAULTS.toolRandom),
             toolPitch: normalizePitch(source.toolPitch, DEFAULTS.toolPitch),
           };
         }
@@ -2174,8 +2177,10 @@ window.__ModuleLoader__.load({
                 const due = this.nextWorkingPulse.get(id);
                 if (due !== undefined && now < due) continue;
                 // Draw the next gap now, so a pulse cannot drift with the tick cadence
-                // and every gap is sized from the current `toolSound` setting.
-                this.nextWorkingPulse.set(id, now + toolPulseGap(interval, this.random));
+                // and every gap is sized from the current `toolSound` setting. `toolRandom`
+                // turns the typewriter jitter off, leaving the plain metronome pace.
+                const gap = settingsValue.toolRandom === false ? interval : toolPulseGap(interval, this.random);
+                this.nextWorkingPulse.set(id, now + gap);
                 this.engine.pulse(id, { pitch: settingsValue.toolPitch });
                 continue;
               }
@@ -2274,10 +2279,11 @@ window.__ModuleLoader__.load({
         }
 
         /** The tool audition's disable window, derived from the selected pulse rate. */
-        function toolAuditionLockMs(toolSound) {
+        function toolAuditionLockMs(toolSound, random = true) {
           const interval = TOOL_PULSE_INTERVALS[toolSound] ?? TOOL_PULSE_INTERVALS["900"];
-          // The live pulse jitters each gap up to 2.4×, and the audition previews that.
-          return Math.max(PHASE_PREVIEW_LOCK_MS, Math.round((toolPreviewNotes(interval) - 1) * interval * 2.4) + 1200);
+          // The live pulse jitters each gap up to 2.4×; a fixed pace needs only the base.
+          const factor = random ? 2.4 : 1;
+          return Math.max(PHASE_PREVIEW_LOCK_MS, Math.round((toolPreviewNotes(interval) - 1) * interval * factor) + 1200);
         }
 
         const CSS = `
@@ -2323,6 +2329,10 @@ window.__ModuleLoader__.load({
         .dcs-switch[aria-checked="true"]{background:var(--dsw-alias-brand-primary,#2f6feb);border-color:transparent}
         .dcs-switch[aria-checked="true"]::after{transform:translateX(14px)}
         .dcs-switch:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,currentColor);outline-offset:2px}
+        .dcs-chip{flex:none;height:24px;padding:0 9px;border:0.5px solid var(--dsw-alias-border-l2,rgba(127,127,127,.35));border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary,inherit);font:inherit;font-size:11px;line-height:1;cursor:pointer;transition:background .15s ease,color .15s ease}
+        .dcs-chip[aria-pressed="true"]{background:var(--dsw-alias-brand-primary,#2f6feb);border-color:transparent;color:#fff}
+        .dcs-chip:disabled{opacity:.45;cursor:default}
+        .dcs-chip:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,currentColor);outline-offset:2px}
         .dcs-nav{display:inline-flex;align-items:center;gap:6px;min-width:0;color:inherit}
         .dcs-nav-icon{display:inline-flex;flex:none;align-items:center}
         .dcs-nav-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -2374,6 +2384,8 @@ window.__ModuleLoader__.load({
           pitchNormal: "标准",
           pitchHigh: "高",
           toolPulse: "脉冲频率",
+          toolRandom: "随机",
+          toolRandomHint: "脉冲间隔随机浮动，像打字机",
           secondsUnit: "秒",
         });
 
@@ -2418,6 +2430,8 @@ window.__ModuleLoader__.load({
           pitchNormal: "Normal",
           pitchHigh: "High",
           toolPulse: "pulse rate",
+          toolRandom: "Random",
+          toolRandomHint: "Jitter the pulse like a typewriter",
           secondsUnit: "s",
         });
 
@@ -2575,6 +2589,24 @@ window.__ModuleLoader__.load({
           });
         }
 
+        /** A compact labeled toggle, used for the tool phase's random pacing. */
+        function ChipToggle(options) {
+          const { label, checked, onChange, disabled, title } = options;
+          return h(
+            "button",
+            {
+              type: "button",
+              className: "dcs-chip",
+              "aria-pressed": checked === true,
+              "aria-label": label,
+              title: title ?? label,
+              disabled: disabled === true,
+              onClick: () => onChange(checked !== true),
+            },
+            label,
+          );
+        }
+
         /** One phase row: label, on/off switch, then the phase's own controls. */
         function phaseRow(label, enabled, onToggle, controls) {
           return h(
@@ -2700,6 +2732,13 @@ window.__ModuleLoader__.load({
                   phasePreview("answer", current.answerSound, t("phaseAnswer")),
                 ]),
                 phaseRow(t("phaseTool"), current.toolSound !== "off", (on) => store.set({ toolSound: on ? "900" : "off" }), [
+                  h(ChipToggle, {
+                    label: t("toolRandom"),
+                    title: t("toolRandomHint"),
+                    checked: current.toolRandom,
+                    disabled: current.toolSound === "off",
+                    onChange: (on) => store.set({ toolRandom: on }),
+                  }),
                   h(SelectBox, {
                     label: `${t("phaseTool")} ${t("toolPulse")}`,
                     value: current.toolSound === "off" ? "900" : current.toolSound,
@@ -2714,7 +2753,7 @@ window.__ModuleLoader__.load({
                     disabled: current.toolSound === "off",
                     onChange: (value) => store.set({ toolPitch: value }),
                   }),
-                  phasePreview("tool", current.toolSound !== "off", t("phaseTool"), toolAuditionLockMs(current.toolSound)),
+                  phasePreview("tool", current.toolSound !== "off", t("phaseTool"), toolAuditionLockMs(current.toolSound, current.toolRandom)),
                 ]),
               ),
             );
@@ -2955,9 +2994,12 @@ window.__ModuleLoader__.load({
               if (interval === undefined) return;
               const count = toolPreviewNotes(interval);
               // Preview the jittered gaps, so the audition sounds like the live phase.
-              const intervals = Array.from({ length: count - 1 }, () => toolPulseGap(interval, Math.random));
+              const intervals = settingsValue.toolRandom
+                ? Array.from({ length: count - 1 }, () => toolPulseGap(interval, Math.random))
+                : undefined;
               music.previewPhrase({
                 count,
+                intervalMs: interval,
                 intervals,
                 pitch: settingsValue.toolPitch,
               });

@@ -67,6 +67,7 @@ const SETTINGS_KEYS = [
   "answerDensity",
   "answerPitch",
   "toolSound",
+  "toolRandom",
   "toolPitch",
 ];
 
@@ -93,6 +94,7 @@ const DEFAULTS = Object.freeze({
   answerDensity: 4,
   answerPitch: "normal",
   toolSound: "900",
+  toolRandom: true,
   toolPitch: "normal",
 });
 
@@ -187,6 +189,7 @@ function normalizeSettings(raw) {
     answerDensity: normalizeDensity(source.answerDensity, DEFAULTS.answerDensity),
     answerPitch: normalizePitch(source.answerPitch, DEFAULTS.answerPitch),
     toolSound: normalizeToolSpeed(source.toolSound, DEFAULTS.toolSound),
+    toolRandom: bool(source.toolRandom, DEFAULTS.toolRandom),
     toolPitch: normalizePitch(source.toolPitch, DEFAULTS.toolPitch),
   };
 }
