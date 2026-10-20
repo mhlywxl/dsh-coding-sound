@@ -1,6 +1,6 @@
 {
   "name": "dsh-coding-sound",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Generative background music and notification chimes for DeepSeek Harness: hear whether the agent is thinking, still working, or waiting for you, without watching the screen.",
   "icon": "./icon.svg",
