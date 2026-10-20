@@ -2274,9 +2274,9 @@ window.__ModuleLoader__.load({
 
         /** Dictionary keys are shared by both locales; `zh` is the reference text. */
         const zh = Object.freeze({
-          nav: "声音",
-          title: "声音",
-          hint: "背景音乐与通知音效",
+          nav: "声音与提醒",
+          title: "声音与提醒",
+          hint: "背景音乐与完成/等待提示音",
           "status.allOff": "全部关闭",
           "status.enabled": "已启用",
           "status.custom": "已自定义",
@@ -2318,9 +2318,9 @@ window.__ModuleLoader__.load({
         });
 
         const en = Object.freeze({
-          nav: "Sound",
-          title: "Sound",
-          hint: "Background music and notification sounds",
+          nav: "Sound & alerts",
+          title: "Sound & alerts",
+          hint: "Background music plus completion and attention chimes",
           "status.allOff": "All off",
           "status.enabled": "Enabled",
           "status.custom": "Customized",

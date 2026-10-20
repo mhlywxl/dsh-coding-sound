@@ -91,9 +91,10 @@ git push origin v0.1.0
 Initial release.
 
 - Token-driven generative background music (4 presets, per-session voices)
-- Separate completion and attention chimes (6 synthesized options)
-- Notification volume plus current/other session music volumes
-- Settings card under Settings → Sound
+- Separate completion, approval and attention chimes (6 synthesized options)
+- Per-phase sounds: thinking / answer / tool execution, each with its own rate and pitch
+- Hear whether the agent is thinking, still working, or waiting for you without watching the screen
+- Settings card under Settings → Sound & alerts
 ```
 
 > 市场条目只需要仓库；Release 不是必需项，但用户和 CI 都会更容易核对版本。
@@ -140,7 +141,7 @@ npm view dsh-coding-sound dist.tarball
 dsh plugin --profile sound-check add dsh-coding-sound
 ```
 
-启动该 profile，确认：设置里出现「声音」、试听有声音、控制台无 `[coding-sound]` 报错。
+启动该 profile，确认：设置里出现「声音与提醒」、试听有声音、控制台无 `[coding-sound]` 报错。
 所有 6 个通知音效都应发声——包内没有 WAV，四个命名选项现在是合成音型。
 
 ### 2.4 包名被占用怎么办
@@ -184,8 +185,8 @@ url: https://github.com/mhlywxl/dsh-coding-sound
 name: mhlywxl/dsh-coding-sound
 category: voice
 description:
-  en: Token-driven generative background music while the model streams, plus separate completion and attention chimes with per-session volumes in a settings card.
-  zh: 模型输出时演奏生成式背景音乐，完成与等待操作各有独立提示音；设置卡片里可调通知音量与当前/其他会话音量。
+  en: 'Generative background music while the model streams, plus completion, approval and attention chimes: hear whether the agent is thinking, still working, or waiting for you without watching the screen.'
+  zh: '模型输出时演奏生成式背景音乐，完成、审批与等待操作各有独立提示音：不盯屏幕也能听出 Agent 在思考、仍在工作还是在等你。'
 ```
 
 注意：
@@ -219,7 +220,7 @@ CI 依次检查：条目数 → `dsh.bundle` → 仓库年龄 → awesome-lint /
 ["assets/screenshot-settings.png"]
 ```
 
-建议至少一张「设置 → 声音」卡片、一张桌面/深色主题的对照图。截图可以由你在 DSH 里截好后放进
+建议至少一张「设置 → 声音与提醒」卡片、一张桌面/深色主题的对照图。截图可以由你在 DSH 里截好后放进
 `assets/` 并提交；**不要**把 `assets/` 加进 `package.json.files`，它只用于市场展示。
 
 ---
@@ -299,7 +300,7 @@ git push origin main
 | `npm publish` 报 403 / 需要 OTP | 重新 `npm login`，按提示输入一次性验证码；确认 `registry` 指向 npmjs |
 | 市场里搜不到 | ① 目录 PR 还没合并；② 仓库不满 1 天；③ 缺 `dsh-plugin` topic；④ 只在 GitHub、没有 npm 版本（Discover 索引优先展示有 npm 版本的条目） |
 | 市场安装后没有声音 | 打开浏览器控制台看 `[coding-sound]`；确认浏览器允许音频、页面有过一次点击（自动播放策略）；确认通知音量 > 0、对应选项不是「关闭」 |
-| 设置页没有「声音」 | 插件未启用或 Host 未重启；检查 `Settings → Plugins` 里 `dsh-coding-sound` 是否 enabled |
+| 设置页没有「声音与提醒」 | 插件未启用或 Host 未重启；检查 `Settings → Plugins` 里 `dsh-coding-sound` 是否 enabled |
 | `dsh plugin add` 失败 | 确认包已发布且 `npm view dsh-coding-sound version` 有值；旧版本缓存可清 pnpm store 后重试 |
 | 发布后发现忘了改版本 | npm 不允许覆盖同一个版本号；`npm version patch` 后重新 `npm publish`，必要时 `npm deprecate` 旧版本 |
 | 误把 WAV 加回仓库 | 不要提交；当前实现全部合成，包内不应出现音频素材 |

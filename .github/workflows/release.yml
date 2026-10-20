@@ -248,8 +248,8 @@ jobs:
           name: ${owner}/${repo}
           category: ${MARKET_CATEGORY}
           description:
-            en: 'Token-driven generative background music while the model streams, plus separate completion and attention chimes with per-session volumes in a settings card.'
-            zh: '模型输出时演奏生成式背景音乐，完成与等待操作各有独立提示音；设置卡片里可调通知音量与当前/其他会话音量。'
+            en: 'Generative background music while the model streams, plus completion, approval and attention chimes: hear whether the agent is thinking, still working, or waiting for you without watching the screen.'
+            zh: '模型输出时演奏生成式背景音乐，完成、审批与等待操作各有独立提示音：不盯屏幕也能听出 Agent 在思考、仍在工作还是在等你。'
           YAML
 
           git config user.name "github-actions[bot]"
@@ -278,7 +278,7 @@ jobs:
           - Token-driven generative music while the model streams: 4 presets, one voice per session, so two busy sessions do not collide.
           - Separate completion and attention chimes; all options are synthesized in the browser with Web Audio, so the package ships no audio files.
           - Per-phase settings: thinking, answer and tool-run sounds each have their own switch plus a rate (density or pulse frequency) and a pitch, and every option has an audition button.
-          - Settings card under Settings -> Sound.
+          - Settings card under Settings -> Sound & alerts.
 
           ## Install
 

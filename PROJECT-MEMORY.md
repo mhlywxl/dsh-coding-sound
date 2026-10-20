@@ -29,7 +29,8 @@
 
 - 名称：`dsh-coding-sound`（DeepSeek Harness 插件）
 - 路径：`D:\dev\harness\dsh-coding-sound`
-- 功能：生成式背景音乐 + 完成/等待通知音效 + 阶段声音设置 + 声音设置卡片
+- 功能：生成式背景音乐 + 完成/审批/等待提示音 + 阶段声音（思考/回答/工具执行）+ 「声音与提醒」设置卡片
+- 对外定位（市场/README 用）：用声音盯住 Agent —— 不盯屏幕也能听出它在思考、仍在工作、还是在等你，从而减少「AI 在等人」、保持专注与效率
 - 版本：`0.1.0`；MIT；无第三方音频素材（全部 Web Audio 合成）
 - 安装：`dsh plugin --profile desktop add dsh-coding-sound`；本地开发用 `link:`
 - 构建 / 测试：`node build.mjs`、`node test.mjs`（35 项）
@@ -53,6 +54,11 @@
 
 ## 关键决策
 
+- **命名与定位**（2026-10-20）：设置菜单从「声音」改为「声音与提醒」（en `Sound & alerts`），
+  插件卡描述改为“不盯屏幕也能听出 Agent 在思考/仍在工作/在等你”；npm description、keywords、
+  README 关键词段与市场条目 YAML 同步，主打搜索词：背景音乐、提示音、完成提醒、审批提醒、
+  通知音效、专注、注意力、效率、sound / notification / chime / focus / attention。
+  市场条目不设 keywords 字段，关键词全部写进 description（en + zh）。
 - **通知音效全部合成**：`assets/`、Host 音频路由、4 个 WAV 素材均已删除（TODO 决策 D4 完成）。
 - **设置保存在浏览器**（`localStorage` 键 `dsh:coding-sound:v1`），不是 Host `Config`；`SettingsStore` 已预留 Host 默认值基线。
 - **阶段声音**：

@@ -1,14 +1,24 @@
 # dsh-coding-sound
 
-DeepSeek Harness（DSH）声音插件：模型输出时演奏**生成式背景音乐**，一轮结束与「等待你操作」各有一声可单独配置的**通知音效**，音量可调，每项可试听。
+DeepSeek Harness（DSH）声音插件：**用声音盯住 Agent**。模型输出时演奏**生成式背景音乐**，完成、审批/等待、思考与工具执行各有可配置的**提示音**——不盯着屏幕，也能凭声音知道它是在思考、还在干活、还是卡在等你。
 
-> Generative background music while the model streams, plus separate completion and attention chimes — all synthesized with Web Audio, no bundled audio assets.
+**关键词**：DeepSeek Harness 声音插件 · 背景音乐 · 提示音 · 完成提醒 · 审批提醒 · 通知音效 · 声音反馈 · 专注 · 注意力 · 效率 · AI 助手声音提醒
+`background music` · `notification sound` · `completion chime` · `approval alert` · `focus` · `attention` · `productivity` · `dsh sound plugin`
 
-设置页新增一页「声音」，卡片与参考桌面版的声音设置同构：
+## 为什么装它
+
+- **不用一直盯着屏幕**：音乐跟着模型正在输出的文字走，停下来那一刻你听得到；思考、回答、工具执行三个阶段的声音可以分别调。
+- **减少「AI 在等你」**：审批与提问会响一次独立的「等待操作」提示音，切到别的窗口也不会漏掉。
+- **保持节奏感**：音符由正在输出的文字驱动，快慢就是它的工作节奏——它还在动，你就听得到。
+- **不打扰**：全部用 Web Audio 在浏览器里合成，包内没有任何音频素材；音乐、通知音量、每个阶段的频率与音高都能单独关闭或调整。
+
+> Generative background music and notification chimes for DeepSeek Harness: hear whether the agent is thinking, still working, or waiting for you, without watching the screen. Every sound is synthesized in the browser with Web Audio — the package ships no audio assets.
+
+设置页新增一页「声音与提醒」，卡片与参考桌面版的声音设置同构：
 
 ```
-🔊 声音                                        [已自定义]  ⌃
-   背景音乐与通知音效
+🔊 声音与提醒                                  [已自定义]  ⌃
+   背景音乐与完成/等待提示音
 ─────────────────────────────────────────────────────────
 生成式背景音乐   [空灵        ⌄]  ▶
 通知音量         ──────●──────  70%
@@ -25,7 +35,7 @@ DeepSeek Harness（DSH）声音插件：模型输出时演奏**生成式背景�
 工具执行    [●]   [0.9 秒 ⌄]    [标准 ⌄]   ▶
 ```
 
-左侧设置导航的「声音」使用扬声器图标：宿主对未知 section id 只提供齿轮兜底，插件在 section 的 label 里带自己的图标，并用一条只命中本行的样式隐藏兜底齿轮（宿主若改结构，最坏退回齿轮 + 扬声器两个图标，不影响功能）。
+左侧设置导航的「声音与提醒」使用扬声器图标：宿主对未知 section id 只提供齿轮兜底，插件在 section 的 label 里带自己的图标，并用一条只命中本行的样式隐藏兜底齿轮（宿主若改结构，最坏退回齿轮 + 扬声器两个图标，不影响功能）。
 
 ## 行为
 
@@ -148,7 +158,7 @@ Host 半改动（`index.js`）需要重启 DSH 才能生效；只改 `src/` 时�
      **设置 → 插件** 里启用 `dsh-coding-sound`（等价于把 `"dsh-coding-sound"`
      加进 `~/.dsh/profiles/desktop/package.json` 的 `dsh.profile.bundles` 数组）。
 
-  5. 完全退出并重启 DSH，打开 **设置 → 声音**。
+  5. 完全退出并重启 DSH，打开 **设置 → 声音与提醒**。
 
   也可以在目标机的 **Plugin Manager** 里直接安装这个目录或 tgz——它会同时完成第 3、4 步。
 
