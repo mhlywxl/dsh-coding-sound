@@ -87,9 +87,11 @@
 ## 上线状态（2026-10-20）
 
 - 已完成：GitHub 仓库 `mhlywxl/dsh-coding-sound`（Public、`dsh-plugin` topic、metadata 齐全）、
-  历史清理（无 `wuxl9`）、npm `dsh-coding-sound@0.1.0` 已发布（provenance）、`v0.1.0` Release、
-  `NPM_TOKEN` / `MARKET_TOKEN` 已配置、release 工作流手动触发验证通过。
-- 待办：在 npm 网页绑定 **Trusted Publisher**（需要 2FA，bypass GAT 无法配置），然后删掉
-  `NPM_TOKEN` 并吊销旧 token；轮换 `MARKET_TOKEN`（它曾出现在聊天记录里）。
+  历史清理（无 `wuxl9`）、npm `0.1.0` / `0.1.1` 已发布（provenance）、`v0.1.0` / `v0.1.1` Release、
+  `MARKET_TOKEN` 已配置、release 工作流（Node 24）手动触发验证通过。
+- **Trusted Publisher 已配置，但被 npm 的已知 bug 阻塞**：2026-07-15 后创建的 GitHub 仓库使用 immutable
+  OIDC subject claims，npm 的 token 交换返回 `OIDC token exchange error - package not found`
+  （npm/cli#9969），GitHub 侧无法关闭。修复前继续用 `NPM_TOKEN` 直发；配置保留，npm 修复后删 token 即可。
+- 待办：npm 修复 #9969 后，删掉 `NPM_TOKEN` 并吊销旧 token；轮换 `MARKET_TOKEN`（曾出现在聊天记录里）。
 - 市场：仓库满 1 天后（2026-10-21 09:15 UTC 之后）重跑 release，让 `catalog` 提市场 PR；合并后市场可见。
 - 可选：市场截图 `screenshots.json`（1–8 张图）。

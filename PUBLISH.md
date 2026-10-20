@@ -288,10 +288,14 @@ npm CLI 在 CI 里会**优先使用 OIDC**，配置一次后可以删掉 `NPM_TO
    - Environment name：留空
    - **Allowed actions**：勾选 **`npm publish`**。2026-09-03 之后新建的配置默认只允许 `npm stage publish`，
      不勾这一项时 `npm publish` 会被拒绝。
-3. 保存后删除仓库 Secret `NPM_TOKEN`，并到 npm 的 Access Tokens 里吊销旧 token。
+3. 确认 OIDC 发布成功后再删除仓库 Secret `NPM_TOKEN`，并到 npm 的 Access Tokens 里吊销旧 token。
 
 注意：
 
+- **已知阻塞（2026-10）**：2026-07-15 之后创建的 GitHub 仓库，OIDC token 使用 immutable subject claims
+  （`repo:owner@id/repo@id:ref:...`）。npm registry 的受信发布者查找暂不认这个格式，会返回
+  `OIDC token exchange error - package not found`（npm/cli#9969），与上面的配置无关；GitHub 侧该格式无法关闭。
+  修复前请继续使用 `NPM_TOKEN`（受信发布者配置可以保留，npm 修复后删掉 token 即可）。
 - Trusted Publishing 需要 `npm` CLI ≥ 11.5.1、Node ≥ 22.14；`release.yml` 已固定 Node 24（自带 npm 11.x）。
 - 用 CLI 配置（`npm trust github ... --file release.yml --allow-publish`）要求**未启用 bypass 的 2FA 登录会话**；
   bypass GAT 会被直接 403 拒绝。网页配置最省事。
@@ -301,7 +305,7 @@ npm CLI 在 CI 里会**优先使用 OIDC**，配置一次后可以删掉 `NPM_TO
 
 ### 5.2 兼容方案：NPM_TOKEN
 
-Trusted Publishing 配好之前，可以用仓库 Secret 发版（Settings → Secrets and variables → Actions）：
+Trusted Publishing 不可用（或尚未配好）时，用仓库 Secret 发版（Settings → Secrets and variables → Actions）：
 
 | Secret | 作用 | 生成方式 |
 |---|---|---|
