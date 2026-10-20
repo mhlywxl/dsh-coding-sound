@@ -31,7 +31,7 @@ const {
 } = presets;
 
 /** Preset used before a stored preference is known, and when one is invalid. */
-const DEFAULT_PRESET = "ethereal";
+const DEFAULT_PRESET = "digital";
 
 /**
  * Spacing of one density step, shared by the live beat and the phase audition.

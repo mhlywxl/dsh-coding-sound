@@ -229,19 +229,20 @@ window.__ModuleLoader__.load({
 
         /**
          * First-run values. A freshly installed plugin is audible — the user installed
-         * a sound plugin — while the non-current session layer stays soft at 35%.
+         * a sound plugin — with the notification chimes at full volume and the
+         * non-current session layer at 80%.
          *
          * Thinking is denser than the answer (one note per 2 reasoning characters) so a
          * long reasoning stream reads as continuous music rather than a slow pulse; the
          * user can change or disable each phase in the settings card.
          */
         const DEFAULTS = Object.freeze({
-          musicPreset: "ethereal",
-          notifyVolume: 70,
+          musicPreset: "digital",
+          notifyVolume: 100,
           successSound: "synth",
           attentionSound: "synth",
           musicVolumeCurrent: 100,
-          musicVolumeOther: 35,
+          musicVolumeOther: 80,
           thinkingSound: true,
           thinkingDensity: 2,
           thinkingPitch: "normal",
@@ -830,7 +831,7 @@ window.__ModuleLoader__.load({
         } = presets;
 
         /** Preset used before a stored preference is known, and when one is invalid. */
-        const DEFAULT_PRESET = "ethereal";
+        const DEFAULT_PRESET = "digital";
 
         /**
          * Spacing of one density step, shared by the live beat and the phase audition.

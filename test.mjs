@@ -213,15 +213,15 @@ test("preset table matches the reference parameter for parameter", () => {
 
 test("defaults and normalization are hardened", () => {
   assert.deepEqual(settings.normalizeSettings(undefined), settings.DEFAULTS);
-  assert.equal(settings.DEFAULTS.musicPreset, "ethereal");
-  assert.equal(settings.DEFAULTS.notifyVolume, 70);
+  assert.equal(settings.DEFAULTS.musicPreset, "digital");
+  assert.equal(settings.DEFAULTS.notifyVolume, 100);
   assert.equal(settings.DEFAULTS.musicVolumeCurrent, 100);
-  assert.equal(settings.DEFAULTS.musicVolumeOther, 35);
-  assert.equal(settings.normalizeSettings({ musicPreset: "nope" }).musicPreset, "ethereal");
+  assert.equal(settings.DEFAULTS.musicVolumeOther, 80);
+  assert.equal(settings.normalizeSettings({ musicPreset: "nope" }).musicPreset, "digital");
   assert.equal(settings.normalizeSettings({ successSound: "nope" }).successSound, "synth");
   assert.equal(settings.normalizeSettings({ notifyVolume: "130" }).notifyVolume, 100);
   assert.equal(settings.normalizeSettings({ notifyVolume: -5 }).notifyVolume, 0);
-  assert.equal(settings.normalizeSettings({ notifyVolume: "abc" }).notifyVolume, 70);
+  assert.equal(settings.normalizeSettings({ notifyVolume: "abc" }).notifyVolume, 100);
   assert.equal(settings.normalizeSettings({ notifyVolume: 72.6 }).notifyVolume, 73);
   assert.equal(settings.normalizeSettings({ musicVolumeCurrent: 120 }).musicVolumeCurrent, 100);
 });
@@ -276,7 +276,7 @@ test("browser-local settings win over Host defaults, field by field", () => {
   assert.equal(resolved.notifyVolume, 90);
   assert.equal(resolved.successSound, "positive");
   assert.equal(resolved.attentionSound, "synth");
-  assert.equal(resolved.musicVolumeOther, 35);
+  assert.equal(resolved.musicVolumeOther, 80);
 });
 
 test("the three-state badge counts audible layers", () => {
@@ -558,10 +558,10 @@ test("current and other sessions use their own volume", () => {
   const { engine, voices, switchTo } = buildVoices();
   voices.apply(new Map([["a", { running: true }], ["b", { running: true }]]));
   assert.ok(engine.calls.some((call) => call[0] === "start" && call[1] === "a" && call[2] === 1));
-  assert.ok(engine.calls.some((call) => call[0] === "start" && call[1] === "b" && call[2] === 0.35));
+  assert.ok(engine.calls.some((call) => call[0] === "start" && call[1] === "b" && call[2] === 0.8));
   switchTo("b");
   voices.setCurrent();
-  assert.ok(engine.calls.some((call) => call[0] === "volume" && call[1] === "a" && call[2] === 0.35));
+  assert.ok(engine.calls.some((call) => call[0] === "volume" && call[1] === "a" && call[2] === 0.8));
   assert.ok(engine.calls.some((call) => call[0] === "volume" && call[1] === "b" && call[2] === 1));
 });
 
