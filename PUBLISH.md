@@ -73,14 +73,19 @@ git push -u origin main
   （**`dsh-plugin` 是市场 CI 的硬性要求**）
 - 建议开启 Issues，`bugs.url` 指向它。
 
-### 1.4 打 tag / Release（可选，但推荐）
+### 1.4 tag / Release
+
+用 `release.yml` 时这一步自动完成：`publish` 成功后创建 `v<version>` tag 与 GitHub Release
+（Release 正文由 `--generate-notes` 生成）。**不要**在本地再打同名 tag。
+
+只有完全不用 Actions、纯手工发布时才需要：
 
 ```powershell
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-在 GitHub 上基于 `v0.1.0` 建 Release，正文写：
+然后在 GitHub 上基于 `v0.1.0` 建 Release，正文写：
 
 ```markdown
 Initial release.
@@ -96,6 +101,9 @@ Initial release.
 ---
 
 ## 2. 发布到 npm
+
+> 常规流程：配好 `NPM_TOKEN` 后 push 到 `main`，`release.yml` 自动发布（带 provenance）。
+> 本节是**手动兜底**——Actions 不可用、或需要立即补发时使用。
 
 ### 2.1 登录
 
@@ -147,6 +155,9 @@ dsh plugin --profile sound-check add dsh-coding-sound
 ---
 
 ## 3. 提交到插件市场（Awesome DSH Plugin）
+
+> 常规流程已自动化：`release.yml` 的 `catalog` job 会 fork 市场仓库、写下面这个 YAML、开 PR
+> （需要 `MARKET_TOKEN`，且仓库满 1 天）。本节说明它会提交什么，以及不能跑 Actions 时怎么手工做。
 
 市场本体（dshmarket）不维护插件列表；列表来自
 [awesome-dsh-plugin/awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)，
@@ -213,25 +224,29 @@ CI 依次检查：条目数 → `dsh.bundle` → 仓库年龄 → awesome-lint /
 
 ---
 
-## 4. 版本迭代流程
+## 4. 版本迭代流程（推 main 自动发布）
+
+仓库带 `.github/workflows/release.yml`：push 到 `main` 时依次执行
+**测试 → npm 发布 → 建 tag/Release → 提插件市场 PR**。每一步幂等，重跑安全。
+首版发布前需要在 GitHub 上配好两个 Secret（见第 5 节）。
 
 ```powershell
-# 1) 改代码
+# 1) 改代码并自检
 node build.mjs
 node test.mjs
 
-# 2) 升版本（会改 package.json 并打 tag）
-npm version patch     # 或 minor / major
+# 2) 只升版本号（不要在本机打 tag：tag 由 CI 创建）
+npm version patch --no-git-tag-version
 
-# 3) 推送代码与 tag
-git push
-git push --tags
-
-# 4) 发布
-npm publish
-
-# 5) GitHub Release 填 npm version 输出里的新 tag
+# 3) 提交并推送，剩下的交给 Actions
+git add -A
+git commit -m "release: 0.1.1"
+git push origin main
 ```
+
+- 不要在本机 `npm publish`，也不要在本机 `git tag v*` + `push --tags`；
+- 版本号没升就 push，CI 会识别「该版本已发布」并跳过；
+- 市场条目指向仓库本身，升版本**不需要**重新提 PR；只有仓库地址、描述或分类变了才要手动更新。
 
 兼容性建议：若以后新增对官方 `@deepseek-ai/*` 包的 import，把它们写进 `peerDependencies`，
 并且预发布分支要显式写，例如：
@@ -246,10 +261,34 @@ npm publish
 
 ---
 
-## 5. 可选：让仓库自己跑测试
+## 5. 自动化发布：前提与配置
 
-仓库已带 `.github/workflows/test.yml`（无依赖，直接 `node test.mjs`）。
-push 后在 GitHub 的 Actions 页看结果即可；本地网络不通不影响它。
+两个工作流：
+
+| 文件 | 触发 | 作用 |
+|---|---|---|
+| `.github/workflows/test.yml` | 任意 push / PR | `node test.mjs` + `node build.mjs --check` |
+| `.github/workflows/release.yml` | push 到 `main`、手动 Run workflow | 测试 → npm 发布（provenance）→ GitHub Release → 市场 PR |
+
+发布工作流依赖两个仓库 Secret（Settings → Secrets and variables → Actions）：
+
+| Secret | 作用 | 生成方式 |
+|---|---|---|
+| `NPM_TOKEN` | 发 npm 包 | npmjs.com → Access Tokens → Granular Access Token（Read and write；2FA 账号需允许 CI 绕过，或改用 Automation token） |
+| `MARKET_TOKEN` | fork `awesome-dsh-plugin/awesome-dsh-plugin` 并开 PR | GitHub classic PAT，勾 `public_repo` |
+
+其他前置条件：
+
+- 仓库必须是 **Public**（npm provenance 与市场收录都要求）；
+- 仓库需要有 `dsh-plugin` topic；市场 CI 还会检查仓库是否满 1 天（未满时 `catalog` 自动推迟，不会失败）；
+- `package.json.repository` 必须指向本仓库，否则工作流在发布前直接报错；
+- `GITHUB_TOKEN` 由 Actions 自动提供，无需配置。
+
+仓库刚建好时 `catalog` 任务会推迟（市场要求仓库满 1 天），Summary 里会给出重跑时间；
+之后在 Actions 页手动 Run workflow 即可补提。
+
+完整的一次性手动清单（建仓库、Secret、Topics、首次发布、失败对照）放在工作区根目录的
+`GITHUB-SETUP.md`，它不随仓库发布；如果希望它跟着仓库走，把该文件复制进本目录并提交即可。
 
 ---
 
@@ -273,9 +312,10 @@ push 后在 GitHub 的 Actions 页看结果即可；本地网络不通不影响�
 - [ ] `node test.mjs` 全绿
 - [ ] `npm pack --dry-run` 文件列表正确（无 WAV、无 logs、有 LICENSE）
 - [ ] `package.json` 已去掉 `private`，版本号正确
-- [ ] `repository` / `homepage` / `bugs` 已填
-- [ ] GitHub 仓库有 `dsh-plugin` topic，Description 准确
-- [ ] 仓库创建满 1 天后再提 catalog PR
-- [ ] npm 已发布，并用干净 profile 安装验证
-- [ ] catalog PR 只新增 `data/plugins/mhlywxl__dsh-coding-sound.yml`
-- [ ] Release / tag 与 npm 版本一致
+- [ ] `repository` / `homepage` / `bugs` 已填，且与 GitHub 仓库一致
+- [ ] GitHub 仓库是 Public，有 `dsh-plugin` topic，Description 准确
+- [ ] `NPM_TOKEN`、`MARKET_TOKEN` 两个 Secret 已配置
+- [ ] push `main` 后 `release` 全绿；npm 上能看到该版本
+- [ ] 仓库满 1 天后重跑 workflow，`catalog` 给出市场 PR 链接
+- [ ] 合并后用干净 profile 安装验证；catalog PR 只新增一条自己的条目
+- [ ] Release / tag 与 npm 版本一致（由 CI 创建，不需要手工补）

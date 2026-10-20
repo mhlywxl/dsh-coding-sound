@@ -1,0 +1,306 @@
+name: release
+
+# Push to main: verify -> publish to npm -> GitHub Release -> plugin-market PR.
+#
+# Every step is idempotent, so re-running is always safe:
+#   * a version already on the registry is not published again,
+#   * an existing release is left alone,
+#   * an entry already listed in the market is not submitted twice,
+#   * a repository younger than 1 day defers the market PR instead of failing
+#     (the catalog rejects younger repositories), and a manual re-run after
+#     24 hours submits it.
+#
+# Manual run: Actions -> release -> Run workflow (or `gh workflow run release.yml`).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: client.js matches src/
+        run: node build.mjs --check
+      - name: offline tests
+        run: node test.mjs
+      - name: npm package contents
+        run: npm pack --dry-run
+
+  publish:
+    name: publish npm
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      published: ${{ steps.npm.outputs.published }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - name: read package metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          version="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; process.stdout.write(JSON.parse(readFileSync("package.json", "utf8")).version)')"
+          repository="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; const r = JSON.parse(readFileSync("package.json", "utf8")).repository; process.stdout.write(typeof r === "string" ? r : (r && r.url) || "")')"
+          {
+            echo "version=${version}"
+            echo "repository=${repository}"
+          } >> "$GITHUB_OUTPUT"
+      - name: package.json repository field
+        env:
+          REPO_URL: ${{ steps.meta.outputs.repository }}
+          REPO_SLUG: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -z "$REPO_URL" ]; then
+            echo "::warning::package.json has no repository field, so npm cannot link the package to this repository and the market cannot show download counts. Add it (see PUBLISH.md section 1.1) and push again."
+            exit 0
+          fi
+          normalized="${REPO_URL#git+}"
+          normalized="${normalized#ssh://git@github.com/}"
+          normalized="${normalized#https://github.com/}"
+          normalized="${normalized%.git}"
+          normalized="${normalized%/}"
+          if [ "$normalized" != "$REPO_SLUG" ]; then
+            echo "::error::package.json repository is '$REPO_URL' but this workflow runs for '$REPO_SLUG'. Fix the repository field before publishing."
+            exit 1
+          fi
+      - name: publish to npm
+        id: npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          REPO_URL: ${{ steps.meta.outputs.repository }}
+        run: |
+          set -euo pipefail
+          pkg="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; process.stdout.write(JSON.parse(readFileSync("package.json", "utf8")).name)')"
+          version="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; process.stdout.write(JSON.parse(readFileSync("package.json", "utf8")).version)')"
+          if npm view "${pkg}@${version}" version >/dev/null 2>&1; then
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "## npm"
+              echo
+              echo "\`${pkg}@${version}\` is already on the registry - nothing was published."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ -z "${NODE_AUTH_TOKEN:-}" ] && [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::Neither NPM_TOKEN nor OIDC trusted publishing is available, so npm publish cannot authenticate. Add the NPM_TOKEN repository secret (see PUBLISH.md section 5)."
+            exit 1
+          fi
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::warning::NPM_TOKEN is not set; falling back to npm trusted publishing (OIDC)."
+          fi
+          if [ -n "$REPO_URL" ]; then
+            npm publish --provenance --access public
+          else
+            npm publish --access public
+          fi
+          echo "published=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "## npm"
+            echo
+            echo "Published \`${pkg}@${version}\`."
+            echo
+            echo "<https://www.npmjs.com/package/${pkg}>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    name: github release
+    needs: publish
+    if: needs.publish.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: tag and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "::notice::${tag} already has a release."
+            exit 0
+          fi
+          gh release create "$tag" --title "$tag" --generate-notes --target "$GITHUB_SHA"
+
+  catalog:
+    name: plugin market PR
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ secrets.MARKET_TOKEN }}
+      FORCE_CATALOG_PR: ${{ vars.FORCE_CATALOG_PR }}
+      UPSTREAM: awesome-dsh-plugin/awesome-dsh-plugin
+      MARKET_CATEGORY: voice
+    steps:
+      - name: submit catalog entry
+        run: |
+          set -euo pipefail
+
+          owner="${GITHUB_REPOSITORY%%/*}"
+          repo="${GITHUB_REPOSITORY#*/}"
+          entry="data/plugins/${owner}__${repo}.yml"
+          branch="$(printf 'add-%s-%s' "$owner" "$repo" | tr '[:upper:]' '[:lower:]')"
+          title="Add ${owner}/${repo}"
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            {
+              echo "## Plugin market"
+              echo
+              echo "Skipped: the \`MARKET_TOKEN\` secret is not configured."
+              echo
+              echo "Create a GitHub personal access token (classic, \`public_repo\`), add it as the \`MARKET_TOKEN\` repository secret, then re-run this workflow."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::MARKET_TOKEN is not configured - skipped the plugin-market pull request."
+            exit 0
+          fi
+
+          if gh api "repos/${UPSTREAM}/contents/${entry}" >/dev/null 2>&1; then
+            {
+              echo "## Plugin market"
+              echo
+              echo "\`${entry}\` is already listed. Market entries point at this repository, so later releases need no catalog change."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::${entry} already exists upstream - nothing to submit."
+            exit 0
+          fi
+
+          created="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.created_at')"
+          age_days=$(( ( $(date +%s) - $(date -d "$created" +%s) ) / 86400 ))
+          if [ "$age_days" -lt 1 ] && [ "${FORCE_CATALOG_PR:-false}" != "true" ]; then
+            ready="$(date -u -d "$created + 1 day" '+%Y-%m-%d %H:%M UTC')"
+            {
+              echo "## Plugin market"
+              echo
+              echo "Deferred: the catalog requires a repository that is at least 1 day old."
+              echo
+              echo "This repository was created ${created}. Re-run this workflow (Actions -> release -> Run workflow) after **${ready}** to open the pull request."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Repository is younger than 1 day - re-run this workflow after ${ready} to submit the market entry."
+            exit 0
+          fi
+
+          upstream_repo="${UPSTREAM#*/}"
+          gh auth setup-git
+          gh repo fork "$UPSTREAM" --clone=false --remote=false >/dev/null 2>&1 || true
+          fork_owner="$(gh api user --jq '.login')"
+
+          fork_ready=false
+          for attempt in 1 2 3 4 5 6; do
+            if git ls-remote "https://github.com/${fork_owner}/${upstream_repo}.git" >/dev/null 2>&1; then
+              fork_ready=true
+              break
+            fi
+            echo "waiting for the fork ${fork_owner}/${upstream_repo} (attempt ${attempt})"
+            sleep 5
+          done
+          if [ "$fork_ready" != "true" ]; then
+            echo "::error::Could not reach the fork ${fork_owner}/${upstream_repo}. Check that MARKET_TOKEN can fork public repositories (classic token: public_repo)."
+            exit 1
+          fi
+
+          rm -rf catalog
+          for attempt in 1 2 3 4 5; do
+            if git clone --depth 1 "https://github.com/${UPSTREAM}.git" catalog 2>/dev/null; then
+              break
+            fi
+            echo "clone attempt ${attempt} failed, retrying"
+            sleep 5
+          done
+          if [ ! -d catalog/.git ]; then
+            echo "::error::Could not clone ${UPSTREAM}."
+            exit 1
+          fi
+
+          cd catalog
+          git remote add fork "https://github.com/${fork_owner}/${upstream_repo}.git"
+          git checkout -b "$branch"
+
+          mkdir -p "$(dirname "$entry")"
+          cat > "$entry" <<YAML
+          url: https://github.com/${owner}/${repo}
+          name: ${owner}/${repo}
+          category: ${MARKET_CATEGORY}
+          description:
+            en: 'Token-driven generative background music while the model streams, plus separate completion and attention chimes with per-session volumes in a settings card.'
+            zh: '模型输出时演奏生成式背景音乐，完成与等待操作各有独立提示音；设置卡片里可调通知音量与当前/其他会话音量。'
+          YAML
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$entry"
+          git commit -m "$title"
+          git push --force fork "HEAD:${branch}"
+
+          existing="$(gh api "repos/${UPSTREAM}/pulls?head=${fork_owner}:${branch}&state=open" --jq 'length')"
+          if [ "$existing" != "0" ]; then
+            pr_url="$(gh api "repos/${UPSTREAM}/pulls?head=${fork_owner}:${branch}&state=open" --jq '.[0].html_url')"
+            {
+              echo "## Plugin market"
+              echo
+              echo "A pull request is already open: ${pr_url}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::Market pull request already open: ${pr_url}"
+            exit 0
+          fi
+
+          cat > pr-body.md <<BODY
+          ## Plugin
+
+          **${repo}** - generative background music and notification chimes for DeepSeek Harness.
+
+          - Token-driven generative music while the model streams: 4 presets, one voice per session, so two busy sessions do not collide.
+          - Separate completion and attention chimes; all options are synthesized in the browser with Web Audio, so the package ships no audio files.
+          - Per-phase settings: thinking, answer and tool-run sounds each have their own switch plus density and pitch (or pulse speed) controls, and every option has an audition button.
+          - Settings card under Settings -> Sound.
+
+          ## Install
+
+          \`\`\`sh
+          dsh plugin add ${repo}
+          \`\`\`
+
+          npm: <https://www.npmjs.com/package/${repo}>
+
+          ## Checks
+
+          - \`node build.mjs --check\` and \`node test.mjs\` (33 offline tests) run before every publish.
+          - \`package.json\` declares \`dsh.bundle.patch\` and \`dsh.client\`; \`cordis.patch.yml\` sits at the repository root.
+          - Tested on Windows 11 with DeepSeek Harness desktop 0.2.1-rc.2; the audio code uses only platform-neutral Web Audio and DOM APIs.
+          BODY
+
+          pr_url="$(gh pr create --repo "$UPSTREAM" --head "${fork_owner}:${branch}" --title "$title" --body-file pr-body.md)"
+          {
+            echo "## Plugin market"
+            echo
+            echo "Opened ${pr_url}"
+            echo
+            echo "CI on that pull request checks entry count, the \`dsh.bundle\` manifest, the 1-day repository age, and the site build. The entry is merged by a maintainer after a source review."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::Market pull request opened: ${pr_url}"

@@ -35,6 +35,22 @@
 - 构建 / 测试：`node build.mjs`、`node test.mjs`（33 项）
 - 发布步骤：见 [PUBLISH.md](PUBLISH.md)
 
+## 发布流水线（CI）
+
+- `.github/workflows/test.yml`：任意 push / PR 跑 `node test.mjs` + `node build.mjs --check`。
+- `.github/workflows/release.yml`：push `main` 或手动 Run workflow，四个幂等 job：
+  `verify`（构建一致性 + 33 项测试 + `npm pack --dry-run`）→ `publish`（版本已在 registry 则跳过，
+  `--provenance --access public`）→ `release`（建 `v<version>` tag 与 Release）→
+  `catalog`（fork `awesome-dsh-plugin/awesome-dsh-plugin`，写 `data/plugins/<owner>__<repo>.yml`，开 PR）。
+- 需要的仓库 Secret：`NPM_TOKEN`（npm granular/automation token）、`MARKET_TOKEN`（classic PAT，
+  `public_repo`）。`GITHUB_TOKEN` 自动提供。仓库必须 Public；`package.json.repository` 必须与
+  `github.repository` 一致，否则 `publish` 前置检查直接失败。
+- 仓库创建不满 1 天时 `catalog` 不失败、只推迟（市场 CI 硬要求），Summary 里给重跑时间；
+  仓库变量 `FORCE_CATALOG_PR=true` 可强制。条目已收录 / 已有 open PR 时同样跳过。
+- 版本迭代：`npm version patch --no-git-tag-version` → 提交 → push。不在本地 `npm publish`、
+  不在本地打 `v*` tag（CI 会建）。
+- 手动步骤清单在**工作区根目录** `D:\dev\harness\GITHUB-SETUP.md`（有意不进仓库、不进 npm 包）。
+
 ## 关键决策
 
 - **通知音效全部合成**：`assets/`、Host 音频路由、4 个 WAV 素材均已删除（TODO 决策 D4 完成）。
@@ -50,6 +66,7 @@
 ## 上线待办
 
 - 刷新桌面页面，确认导航扬声器图标与三行阶段试听。
-- 建 GitHub 仓库、补 `repository` / `homepage` / `bugs`、加 `dsh-plugin` topic。
-- `npm publish`；仓库满 1 天后向 `awesome-dsh-plugin/awesome-dsh-plugin` 提交 catalog 条目。
-- 可选：市场截图 `screenshots.json`（1–8 张图），以及 GitHub Release。
+- 建 GitHub 仓库（Public）、补 `repository` / `homepage` / `bugs`、加 `dsh-plugin` topic。
+- 配 `NPM_TOKEN` 与 `MARKET_TOKEN` 两个 Secret，push `main` 触发 `release.yml`。
+- 仓库满 1 天后重跑 workflow 自动提市场 PR；合并后市场可见。
+- 可选：市场截图 `screenshots.json`（1–8 张图），以及 npm trusted publishing（可删掉 `NPM_TOKEN`）。
