@@ -1,9 +1,9 @@
 # 发布指南（GitHub → npm → 插件市场）
 
-面向本仓库维护者。所有命令都在仓库根目录执行（Windows PowerShell）：
+面向本仓库维护者。所有命令都在仓库根目录执行（macOS / Linux / WSL 用 sh，Windows 用 PowerShell 均可）：
 
-```powershell
-cd D:\dev\harness\dsh-coding-sound
+```sh
+cd /path/to/dsh-coding-sound    # 换成你的仓库路径
 ```
 
 当前包信息：
@@ -25,7 +25,7 @@ cd D:\dev\harness\dsh-coding-sound
 
 ## 0. 发布前本地检查（不需要联网）
 
-```powershell
+```sh
 node build.mjs --check   # client.js 必须与 src/ 一致
 node test.mjs            # 35 项离线测试
 npm pack --dry-run       # 看最终会进入 npm 包的文件列表
@@ -58,7 +58,7 @@ npm pack --dry-run       # 看最终会进入 npm 包的文件列表
 
 本轮已经执行过 `git init -b main` 和首个提交；远程仓库建好后：
 
-```powershell
+```sh
 git remote add origin https://github.com/mhlywxl/dsh-coding-sound.git
 git push -u origin main
 ```
@@ -80,7 +80,7 @@ git push -u origin main
 
 只有完全不用 Actions、纯手工发布时才需要：
 
-```powershell
+```sh
 git tag v0.1.0
 git push origin v0.1.0
 ```
@@ -109,27 +109,27 @@ Initial release.
 
 ### 2.1 登录
 
-```powershell
+```sh
 npm login
 npm whoami
 ```
 
 需要 2FA 的账号按提示走。发布前确认 registry：
 
-```powershell
+```sh
 npm config get registry     # 应为 https://registry.npmjs.org/
 ```
 
 ### 2.2 发布
 
-```powershell
+```sh
 npm publish
 ```
 
 未 scoped 的包默认就是 public，不需要 `--access public`。
 发布成功后核对：
 
-```powershell
+```sh
 npm view dsh-coding-sound version
 npm view dsh-coding-sound dist.tarball
 ```
@@ -138,7 +138,7 @@ npm view dsh-coding-sound dist.tarball
 
 不要动现在能用的 desktop profile（它是指向本地目录的 link）。另建一个临时 profile：
 
-```powershell
+```sh
 dsh plugin --profile sound-check add dsh-coding-sound
 ```
 
@@ -233,7 +233,7 @@ CI 依次检查：条目数 → `dsh.bundle` → 仓库年龄 → awesome-lint /
 首版发布前需要在 GitHub 上配好两个 Secret（见第 5 节）；配好并验证后，若想改回
 push 到 `main` 自动发布，恢复 `release.yml` 的 `push: branches: [main]` 触发即可。
 
-```powershell
+```sh
 # 1) 改代码并自检
 node build.mjs
 node test.mjs
