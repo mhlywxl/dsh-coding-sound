@@ -7,6 +7,71 @@ DeepSeek Harness（DSH）声音插件：**用声音盯住 Agent**。模型输出
 **关键词**：DeepSeek Harness 声音插件 · 背景音乐 · 提示音 · 完成提醒 · 审批提醒 · 通知音效 · 声音反馈 · 专注 · 注意力 · 效率 · AI 助手声音提醒
 `background music` · `notification sound` · `completion chime` · `approval alert` · `focus` · `attention` · `productivity` · `dsh sound plugin`
 
+## 快速开始
+
+### 先选运行方式
+
+| 方式 | 适用场景 | 插件安装位置 |
+| --- | --- | --- |
+| Web（`dsh web`，浏览器打开） | 在浏览器里使用、远程机器 | `web` profile |
+| 桌面端 DSH Desktop（`dsh-app://`） | 日常使用，推荐 | `desktop` profile，由桌面端管理 |
+
+- 支持 DSH 0.2.0 / 0.2.1，当前针对 0.2.1-rc.2 构建。
+- 没有原生依赖、没有安装脚本，`client.js` 已预构建，macOS / Windows / Linux 行为一致。
+- 运行时不联网：所有声音由 Web Audio 实时合成，包内没有音频素材。
+
+### Web：在线安装
+
+```sh
+dsh plugin --profile web add dsh-coding-sound
+dsh --profile web
+```
+
+`dsh --profile web` 会打印带 token 的地址；如果服务已经在运行，安装后重启它，再硬刷新页面。
+
+### Web：离线安装
+
+在联网机器打包，或从 GitHub Release 下载 `.tgz`，拷到目标机器：
+
+```sh
+# 联网机器
+npm pack dsh-coding-sound
+
+# 目标机器：.tgz 绝对路径
+dsh plugin --profile web add /absolute/path/dsh-coding-sound-<version>.tgz
+
+# 或者解压后安装目录
+dsh plugin --profile web add /absolute/path/dsh-coding-sound
+dsh --profile web
+```
+
+- 只有源码 ZIP 时，先解压；发布包已经包含 `lib/client.js`，通常不需要再构建。目录根下必须能直接看到 `package.json`。
+- 目标机器不需要访问 npm，也不需要访问 GitHub。
+
+### Desktop：在线安装
+
+1. 打开 DSH Desktop，侧边栏 **插件市场** 搜索 `dsh-coding-sound` 并安装；或进入 **插件 → 添加插件 → 安装第三方插件**，填入包名。
+2. 打开 **设置 → 插件**，启用 `dsh-coding-sound`。
+3. **完全退出并重开 DSH Desktop**，新的客户端 bundle 才会生效。
+
+> 桌面端的 `desktop` profile 由 Electron 应用独占管理。不要在终端执行 `dsh plugin --profile desktop add ...`，该命令会被拒绝；桌面端请用插件市场 / 添加插件界面。
+
+### Desktop：离线安装
+
+1. 在联网机器执行 `npm pack dsh-coding-sound`，或从 Release 下载 `.tgz`，拷到目标机器。
+2. DSH Desktop → **插件 → 添加插件 → 安装第三方插件**：
+   - 优先填 `.tgz` 的**绝对路径**（安装器识别为「压缩包」）；
+   - 如果当前版本只接受目录，先解压 `.tgz`，再填解压后的目录（根下要有 `package.json`）。
+3. 在 **设置 → 插件** 启用，完全退出并重开 DSH Desktop。
+4. 离线机器不需要网络；插件运行时也不联网。
+
+### 启用与验证
+
+- **设置 → 插件** 中确认 `dsh-coding-sound` 已启用；桌面端完整重启，Web 端重启 `dsh web` 并刷新。
+- 打开 **设置 → 声音与提醒**，应能看到音乐预设、通知音效和音量选项。
+- 点任一音效的试听按钮；再发一条消息，确认完成/等待提示音会响。
+- 没有声音时：先检查系统音量、插件里的音乐/通知音量是否为 0；Safari 首次播放需要先点一下页面（浏览器自动播放策略）。
+
 ## 为什么装它
 
 - **不用一直盯着屏幕**：音乐跟着模型正在输出的文字走，停下来那一刻你听得到；思考、回答、工具执行三个阶段的声音可以分别调。
@@ -109,25 +174,6 @@ DeepSeek Harness（DSH）声音插件：**用声音盯住 Agent**。模型输出
 - 「合成音效」按场景区分完成/等待两种音型；四个命名选项对两个场景使用同一段音型（与原素材行为一致）。
 - 音量为 0 时两个提示音都不播；浏览器不支持 Web Audio 时设置页给出提示，页面其余功能不受影响。
 
-## 安装
-
-```sh
-dsh plugin --profile desktop add dsh-coding-sound
-```
-
-装完到 **设置 → 插件** 启用 `dsh-coding-sound`，然后完全退出并重开 DSH；设置页会多出 **声音与提醒**。
-
-本地开发用 link 安装；改 `src/` 后重建 `client.js` 并刷新页面即可：
-
-```sh
-dsh plugin --profile desktop add link:/path/to/dsh-coding-sound
-node build.mjs
-```
-
-- 没有原生依赖、没有安装脚本，`client.js` 已预构建，macOS / Windows / Linux 行为一致。
-- 离线安装：`npm pack` 得到 tgz，拷到目标机后执行 `dsh plugin --profile desktop add <tgz>`，同样在设置里启用并重启。
-- 运行时不联网：所有声音由 Web Audio 合成，包内没有音频素材。
-
 ## 设置与存储
 
 设置保存在浏览器 `localStorage`（键 `dsh:coding-sound:v1`），刷新、重启后仍在；不同浏览器各自独立。Safari 首次出声需要点一下页面，这是浏览器的自动播放策略，插件已处理恢复。
@@ -154,17 +200,68 @@ Generative background music and notification chimes for DeepSeek Harness (DSH): 
 - **Per-phase sounds** — thinking, answer and tool execution each have their own switch, a rate (characters per beat or pulse interval) and a pitch; the tool pulse can jitter like a typewriter.
 - **Settings card** — Settings → Sound & alerts, with an audition button on every option and separate current/other session volumes.
 
-Install:
+### Quick start
+
+**Pick where to run it:** Web (`dsh web`, browser, `web` profile) or DSH Desktop
+(`dsh-app://`, `desktop` profile managed by the app). DSH 0.2.0 / 0.2.1 are
+supported; this build targets 0.2.1-rc.2. The package ships a prebuilt
+`client.js`, has no native modules or install scripts, and makes no runtime
+network requests.
+
+**Web: online install**
 
 ```sh
-dsh plugin --profile desktop add dsh-coding-sound
+dsh plugin --profile web add dsh-coding-sound
+dsh --profile web
 ```
 
-Local development uses a link install, so `src/` edits are picked up after a rebuild and a page refresh:
+**Web: offline install** — pack on a connected machine (`npm pack
+dsh-coding-sound`) or download the `.tgz` from a Release, copy it over, then:
 
 ```sh
-dsh plugin --profile desktop add link:/path/to/dsh-coding-sound
+dsh plugin --profile web add /absolute/path/dsh-coding-sound-<version>.tgz
+# or, after extracting:
+dsh plugin --profile web add /absolute/path/dsh-coding-sound
+dsh --profile web
 ```
+
+For a source ZIP, extract it first; the package root must contain `package.json`
+(release tarballs already include `lib/client.js`). The target machine needs
+neither npm nor GitHub access.
+
+**Desktop: online install**
+
+1. DSH Desktop → **Plugin market** in the sidebar, search `dsh-coding-sound`,
+   install it. Or **Plugins → Add plugin → Install a third-party plugin** and
+   enter the package name.
+2. **Settings → Plugins** → enable `dsh-coding-sound`.
+3. **Quit and reopen DSH Desktop completely.**
+
+> The `desktop` profile is owned by the Electron app. Do **not** run
+> `dsh plugin --profile desktop add ...` in a terminal; it is rejected. Use the
+> in-app plugin market / Add plugin UI.
+
+**Desktop: offline install**
+
+1. On a connected machine run `npm pack dsh-coding-sound`, or download the
+   `.tgz` from a Release, and copy it to the target.
+2. DSH Desktop → **Plugins → Add plugin → Install a third-party plugin**:
+   enter the **absolute path to the `.tgz`** (recognised as a tarball); if that
+   build only accepts directories, extract it and enter the folder (its root
+   must contain `package.json`).
+3. Enable it in **Settings → Plugins**, then quit and reopen DSH Desktop.
+4. The offline machine needs no network access; the plugin makes no runtime
+   requests.
+
+**Enable and verify**
+
+- **Settings → Plugins** shows `dsh-coding-sound` enabled. Restart Desktop
+  completely, or restart `dsh web` and refresh for Web.
+- **Settings → Sound & alerts** should show the music presets, chimes and volume
+  controls. Audition an option, then send a message and confirm the completion
+  chime plays.
+- No sound: check the system volume and the plugin's music/notification volumes
+  first. Safari needs one page click before its first sound (autoplay policy).
 
 Defaults: Digital preset, notification volume 100%, "Synth" completion and waiting chimes, current session 100%, other sessions 80%, thinking every 2 characters, answer every 4, tool pulse 0.9 s with the random jitter on.
 
