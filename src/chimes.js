@@ -8,9 +8,17 @@
  * package ships no third-party audio assets and every option still sounds
  * distinct.
  *
- * Every note is a sine carrier plus a 4× shimmer (12% level, decaying to 60% of
- * the note's duration). A failed/unsupported `AudioContext` leaves the call
- * silent instead of throwing into the caller.
+ * Playback is tuned for long listening: the phrase tables below keep the
+ * reference intervals, while the player transposes them one octave down
+ * ({@link CHIME_TRANSPOSE}) so the fundamentals sit at 261–1046 Hz instead of
+ * 523–2093 Hz — below the ear's 2–5 kHz sensitivity peak — and uses a 2×
+ * shimmer at 6% instead of a 4× shimmer at 12%. The attack is 8 ms rather than
+ * 2 ms, which removes the edge a half-cycle ramp gives low notes. A trim keeps
+ * the two alert voices present without being startling.
+ *
+ * Every note is a sine carrier plus its octave shimmer (decaying to 60% of the
+ * note's duration). A failed/unsupported `AudioContext` leaves the call silent
+ * instead of throwing into the caller.
  */
 
 const { notificationVolumeToGain, chimeVariantLevel } = settings;
@@ -56,9 +64,22 @@ const CHIME_VARIANTS = Object.freeze({
   ]),
 });
 
-/** Relative level and decay ratio of the shimmer partial. */
-const SHIMMER_LEVEL = 0.12;
+/**
+ * Comfort tuning applied at playback, not baked into the reference tables.
+ *
+ * Human hearing is most sensitive around 2–5 kHz (the ear-canal resonance), and
+ * sustained energy there is what makes a chime feel piercing after a while.
+ * One octave down moves every fundamental into 261–1046 Hz, where the same
+ * loudness is comfortable rather than sharp; the octave shimmer stays musical
+ * and consonant. The slower attack avoids the transient click, and the trim
+ * keeps the alert audible without jumping out of the background mix.
+ */
+const CHIME_TRANSPOSE = 0.5;
+const CHIME_ATTACK_SECONDS = 0.008;
+const SHIMMER_RATIO = 2;
+const SHIMMER_LEVEL = 0.06;
 const SHIMMER_DURATION_RATIO = 0.6;
+const CHIME_OUTPUT_TRIM = 0.8;
 
 /** How long one phrase keeps sounding, in seconds. */
 function scheduleDuration(notes) {
@@ -137,19 +158,26 @@ class ChimePlayer {
     const base = ctx.currentTime + 0.01;
     for (const note of notes) {
       const start = base + note.at;
-      scheduleSynthNote(ctx, ctx.destination, note.freq, start, outputVolume * note.level, note.duration);
+      scheduleSynthNote(
+        ctx,
+        ctx.destination,
+        note.freq * CHIME_TRANSPOSE,
+        start,
+        outputVolume * note.level * CHIME_OUTPUT_TRIM,
+        note.duration,
+      );
     }
   }
 }
 
-/** One synthesized note: a sine carrier plus its 4× shimmer. */
+/** One synthesized note: a sine carrier plus its octave shimmer. */
 function scheduleSynthNote(ctx, destination, freq, startTime, peak, duration) {
   const osc = ctx.createOscillator();
   osc.type = "sine";
   osc.frequency.setValueAtTime(freq, startTime);
   const gain = ctx.createGain();
   gain.gain.setValueAtTime(0, startTime);
-  gain.gain.linearRampToValueAtTime(peak, startTime + 0.002);
+  gain.gain.linearRampToValueAtTime(peak, startTime + CHIME_ATTACK_SECONDS);
   gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
   osc.connect(gain);
   gain.connect(destination);
@@ -158,10 +186,10 @@ function scheduleSynthNote(ctx, destination, freq, startTime, peak, duration) {
 
   const shimmer = ctx.createOscillator();
   shimmer.type = "sine";
-  shimmer.frequency.setValueAtTime(freq * 4, startTime);
+  shimmer.frequency.setValueAtTime(freq * SHIMMER_RATIO, startTime);
   const shimmerGain = ctx.createGain();
   shimmerGain.gain.setValueAtTime(0, startTime);
-  shimmerGain.gain.linearRampToValueAtTime(peak * SHIMMER_LEVEL, startTime + 0.002);
+  shimmerGain.gain.linearRampToValueAtTime(peak * SHIMMER_LEVEL, startTime + CHIME_ATTACK_SECONDS);
   shimmerGain.gain.exponentialRampToValueAtTime(0.001, startTime + duration * SHIMMER_DURATION_RATIO);
   shimmer.connect(shimmerGain);
   shimmerGain.connect(destination);
@@ -172,6 +200,10 @@ function scheduleSynthNote(ctx, destination, freq, startTime, peak, duration) {
 module.exports = {
   SYNTH_NOTES,
   CHIME_VARIANTS,
+  CHIME_TRANSPOSE,
+  CHIME_ATTACK_SECONDS,
+  CHIME_OUTPUT_TRIM,
+  SHIMMER_RATIO,
   SHIMMER_LEVEL,
   SHIMMER_DURATION_RATIO,
   scheduleDuration,

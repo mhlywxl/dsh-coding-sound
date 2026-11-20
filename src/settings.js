@@ -76,12 +76,17 @@ const SETTINGS_KEYS = [
  * a sound plugin — with the notification chimes at full volume and the
  * non-current session layer at 80%.
  *
+ * The first-run preset is `ethereal` (sine, slow attack), not `digital`: a
+ * square wave's odd harmonics are the brightest material the engine can make,
+ * and the default is what a user hears for a whole session. They can still
+ * choose `digital` deliberately.
+ *
  * Thinking is denser than the answer (one note per 2 reasoning characters) so a
  * long reasoning stream reads as continuous music rather than a slow pulse; the
  * user can change or disable each phase in the settings card.
  */
 const DEFAULTS = Object.freeze({
-  musicPreset: "digital",
+  musicPreset: "ethereal",
   notifyVolume: 100,
   successSound: "synth",
   attentionSound: "synth",
@@ -211,11 +216,17 @@ function resolveSettings(hostDefaults, localOverrides) {
 /**
  * The card's three-state badge, copied from the reference `summarizeSoundStatus`:
  * count the audible layers; 0 = all off, 1 = enabled, 2–3 = customized.
+ *
+ * `phasesAudible` is whether any phase of the music layer is on. It defaults to
+ * true for callers that predate the phase card, but the client passes it: a
+ * music preset with every phase muted makes no sound at all, so the badge must
+ * not still claim the section is audible.
  */
-function summarizeSoundStatus(music, success, attention, notificationVolume) {
+function summarizeSoundStatus(music, success, attention, notificationVolume, phasesAudible = true) {
   const notificationsAudible = notificationVolume > 0;
+  const musicAudible = music !== "off" && phasesAudible === true;
   const count = [
-    music !== "off",
+    musicAudible,
     notificationsAudible && success !== "off",
     notificationsAudible && attention !== "off",
   ].filter(Boolean).length;

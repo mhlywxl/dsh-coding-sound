@@ -83,6 +83,9 @@ const CSS = `
 .dcs-toggle:hover{background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.14));color:var(--dsw-alias-label-primary,inherit)}
 .dcs-toggle:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,currentColor);outline-offset:1px}
 .dcs-list{display:flex;flex-direction:column;gap:10px;margin-top:12px;padding-top:12px;border-top:0.5px solid var(--dsw-alias-border-l1,rgba(127,127,127,.18))}
+.dcs-group{display:flex;flex-direction:column;gap:10px}
+.dcs-group+.dcs-group{margin-top:6px;padding-top:10px;border-top:0.5px dashed var(--dsw-alias-border-l1,rgba(127,127,127,.14))}
+.dcs-group-title{font-size:11px;font-weight:600;letter-spacing:.02em;color:var(--dsw-alias-label-secondary,inherit);opacity:.9}
 .dcs-row{display:flex;align-items:center;gap:12px;min-height:26px}
 .dcs-label{flex:1;min-width:0;font-size:12px;line-height:1.4;color:var(--dsw-alias-label-secondary,inherit)}
 .dcs-control{display:inline-flex;flex:none;align-items:center;gap:6px}
@@ -128,7 +131,7 @@ button:has(> span [data-coding-sound-nav])>svg{display:none}
 const zh = Object.freeze({
   nav: "声音与提醒",
   title: "声音与提醒",
-  hint: "背景音乐与完成/等待提示音",
+  hint: "背景音乐、阶段声音与完成/等待提示音",
   "status.allOff": "全部关闭",
   "status.enabled": "已启用",
   "status.custom": "已自定义",
@@ -150,12 +153,15 @@ const zh = Object.freeze({
   "sound.start": "界面启动",
   "sound.back": "界面返回",
   preview: "试听",
-  currentVolume: "当前会话音量",
-  otherVolume: "其他会话音量",
-  otherVolumeHint: "其他会话仍在后台工作时使用的音量",
+  currentVolume: "当前会话音乐音量",
+  otherVolume: "其他会话音乐音量",
+  otherVolumeHint: "其他会话仍在后台工作时使用的音乐音量",
   noAudio: "这个浏览器不支持 Web Audio，声音无法播放。",
+  groupMusic: "背景音乐",
+  groupNotifications: "通知提示音",
   phaseTitle: "阶段声音",
-  phaseHint: "思考 / 回答 / 工具执行，可分别关闭、调频率与音高",
+  phaseHint: "背景音乐层的三个阶段：思考 / 回答 / 工具执行，可分别关闭、调频率与音高",
+  phaseNeedsMusic: "阶段声音属于背景音乐层：先启用一个音乐预设，运行中才会发声（试听仍可用）。",
   phaseThinking: "思考",
   phaseAnswer: "回答正文",
   phaseTool: "工具执行",
@@ -174,7 +180,7 @@ const zh = Object.freeze({
 const en = Object.freeze({
   nav: "Sound & alerts",
   title: "Sound & alerts",
-  hint: "Background music plus completion and attention chimes",
+  hint: "Background music, phase sounds and completion/attention chimes",
   "status.allOff": "All off",
   "status.enabled": "Enabled",
   "status.custom": "Customized",
@@ -196,12 +202,15 @@ const en = Object.freeze({
   "sound.start": "UI start",
   "sound.back": "UI back",
   preview: "Preview",
-  currentVolume: "Current session volume",
-  otherVolume: "Other sessions volume",
-  otherVolumeHint: "Volume used by sessions still working in the background",
+  currentVolume: "Current session music volume",
+  otherVolume: "Other sessions music volume",
+  otherVolumeHint: "Music volume used by sessions still working in the background",
   noAudio: "This browser has no Web Audio; sound cannot play.",
+  groupMusic: "Background music",
+  groupNotifications: "Notifications",
   phaseTitle: "Phase sounds",
-  phaseHint: "Thinking / answer / tool execution — each can be muted, retimed or transposed",
+  phaseHint: "Three modes of the music layer: thinking / answer / tool execution — each can be muted, retimed or transposed",
+  phaseNeedsMusic: "Phase sounds belong to the music layer: enable a preset to hear them live (preview still works).",
   phaseThinking: "Thinking",
   phaseAnswer: "Answer",
   phaseTool: "Tool execution",
@@ -303,7 +312,7 @@ function SelectControl(options) {
             type: "button",
             className: "dcs-preview",
             title: previewLabel,
-            "aria-label": previewLabel,
+            "aria-label": `${label} ${previewLabel}`,
             disabled: previewLocked === true,
             onClick: preview,
           },
@@ -312,9 +321,9 @@ function SelectControl(options) {
   );
 }
 
-/** One range plus its `{value}%` readout. */
+/** One range plus its `{value}%` readout and an optional audition. */
 function VolumeControl(options) {
-  const { label, value, onChange } = options;
+  const { label, value, onChange, preview, previewLabel, previewLocked } = options;
   return h(
     "span",
     { className: "dcs-control" },
@@ -329,6 +338,20 @@ function VolumeControl(options) {
       onChange: (event) => onChange(Number(event.target.value)),
     }),
     h("output", { className: "dcs-value" }, `${value}%`),
+    typeof preview === "function"
+      ? h(
+          "button",
+          {
+            type: "button",
+            className: "dcs-preview",
+            title: previewLabel,
+            "aria-label": `${label} ${previewLabel}`,
+            disabled: previewLocked === true,
+            onClick: preview,
+          },
+          playIcon(),
+        )
+      : null,
   );
 }
 
@@ -407,7 +430,7 @@ function phaseRow(label, enabled, onToggle, controls) {
  * subscribes to the store with `useSyncExternalStore`.
  */
 function createSoundSection(deps) {
-  const { store, t, subscribeLocale, previewMusic, previewChime, previewPhase, audioAvailable } = deps;
+  const { store, t, subscribeLocale, previewMusic, previewChime, previewNotificationVolume, previewPhase, audioAvailable } = deps;
 
   return function SoundSection() {
     const snapshot = useStoreSnapshot(store);
@@ -439,7 +462,14 @@ function createSoundSection(deps) {
 
     const current = snapshot.settings;
     const expanded = snapshot.expanded;
-    const status = summarizeSoundStatus(current.musicPreset, current.successSound, current.attentionSound, current.notifyVolume);
+    const phasesAudible = current.thinkingSound || current.answerSound || current.toolSound !== "off";
+    const status = summarizeSoundStatus(
+      current.musicPreset,
+      current.successSound,
+      current.attentionSound,
+      current.notifyVolume,
+      phasesAudible,
+    );
     const densityChoices = DENSITY_VALUES.map((value) => ({ value: String(value), label: `${value} ${t("charsPerBeat")}` }));
     const pitchChoices = [
       { value: "low", label: t("pitchLow") },
@@ -464,9 +494,15 @@ function createSoundSection(deps) {
         playIcon(),
       );
 
+    // The tool row folds its on/off switch into the rate value (`off`), unlike
+    // the two text rows, which have a separate switch key. Remember the last
+    // live rate so toggling the switch back on does not silently reset the pace
+    // the user chose.
+    const lastToolRate = useRef(current.toolSound === "off" ? "900" : current.toolSound);
+    const toolRate = current.toolSound === "off" ? lastToolRate.current : current.toolSound;
     // The per-phase card: thinking and answer are token-driven and each has its
     // own density/pitch; tool execution has no text, so its rate is the pulse
-    // interval (six steps plus off) and it has the same pitch choice.
+    // interval (ten steps plus off) and it has the same pitch choice.
     const phaseCard = h(
       "div",
       { className: "dcs-card" },
@@ -513,7 +549,7 @@ function createSoundSection(deps) {
           }),
           phasePreview("answer", current.answerSound, t("phaseAnswer")),
         ]),
-        phaseRow(t("phaseTool"), current.toolSound !== "off", (on) => store.set({ toolSound: on ? "900" : "off" }), [
+        phaseRow(t("phaseTool"), current.toolSound !== "off", (on) => store.set({ toolSound: on ? lastToolRate.current : "off" }), [
           h(ChipToggle, {
             label: t("toolRandom"),
             title: t("toolRandomHint"),
@@ -523,10 +559,13 @@ function createSoundSection(deps) {
           }),
           h(SelectBox, {
             label: `${t("phaseTool")} ${t("toolPulse")}`,
-            value: current.toolSound === "off" ? "900" : current.toolSound,
+            value: toolRate,
             choices: toolSpeedChoices,
             disabled: current.toolSound === "off",
-            onChange: (value) => store.set({ toolSound: value }),
+            onChange: (value) => {
+              lastToolRate.current = value;
+              store.set({ toolSound: value });
+            },
           }),
           h(SelectBox, {
             label: `${t("phaseTool")} ${t("pitch")}`,
@@ -537,6 +576,11 @@ function createSoundSection(deps) {
           }),
           phasePreview("tool", current.toolSound !== "off", t("phaseTool"), toolAuditionLockMs(current.toolSound, current.toolRandom)),
         ]),
+        // Phase sounds are the music layer's three modes, not the notification
+        // chimes. With no preset there is no voice to play them through, so say
+        // that instead of leaving the user wondering why a preview sounds but a
+        // live turn does not.
+        current.musicPreset === "off" ? h("div", { className: "dcs-note" }, t("phaseNeedsMusic")) : null,
       ),
     );
 
@@ -561,83 +605,109 @@ function createSoundSection(deps) {
       ),
     );
 
+    // Two explicit categories, in the order they are used: the music layer with
+    // its own two session volumes, then the notification layer with its volume
+    // and its two chimes. The phase card below is the third category. Keeping
+    // the volume next to the layer it controls is what stops "current session
+    // volume" from looking like a property of the notification chimes.
+    const group = (titleKey, children) =>
+      h(
+        "div",
+        { className: "dcs-group" },
+        h("div", { className: "dcs-group-title" }, t(titleKey)),
+        ...children,
+      );
+
     const list = h(
       "div",
       { className: "dcs-list", id: PANEL_ID },
-        row(
-          t("music"),
-          h(SelectControl, {
-            label: t("music"),
-            value: current.musicPreset,
-            choices: musicChoices,
-            previewLabel: t("preview"),
-            previewLocked: busy.music === true,
-            preview: () => lock("music", () => previewMusic(current.musicPreset)),
-            onChange: (next) => {
-              store.set({ musicPreset: next });
-              if (next !== "off") lock("music", () => previewMusic(next));
-            },
-          }),
-        ),
-        row(
-          t("notifyVolume"),
-          h(VolumeControl, {
-            label: t("notifyVolume"),
-            value: current.notifyVolume,
-            onChange: (value) => store.set({ notifyVolume: value }),
-          }),
-        ),
-        row(
-          t("success"),
-          h(SelectControl, {
-            label: t("success"),
-            value: current.successSound,
-            choices: soundChoices,
-            previewLabel: t("preview"),
-            previewLocked: busy.success === true,
-            preview: () => lock("success", () => previewChime("success")),
-            onChange: (next) => {
-              store.set({ successSound: next });
-              if (next !== "off") lock("success", () => previewChime("success"));
-            },
-          }),
-        ),
-        row(
-          t("attention"),
-          h(SelectControl, {
-            label: t("attention"),
-            value: current.attentionSound,
-            choices: soundChoices,
-            previewLabel: t("preview"),
-            previewLocked: busy.attention === true,
-            preview: () => lock("attention", () => previewChime("attention")),
-            onChange: (next) => {
-              store.set({ attentionSound: next });
-              if (next !== "off") lock("attention", () => previewChime("attention"));
-            },
-          }),
-        ),
-        row(
-          t("currentVolume"),
-          h(VolumeControl, {
-            label: t("currentVolume"),
-            value: current.musicVolumeCurrent,
-            onChange: (value) => store.set({ musicVolumeCurrent: value }),
-          }),
-        ),
-        row(
-          t("otherVolume"),
-          h(VolumeControl, {
-            label: t("otherVolume"),
-            value: current.musicVolumeOther,
-            onChange: (value) => store.set({ musicVolumeOther: value }),
-          }),
-          t("otherVolumeHint"),
-        ),
+        group("groupMusic", [
+          row(
+            t("music"),
+            h(SelectControl, {
+              label: t("music"),
+              value: current.musicPreset,
+              choices: musicChoices,
+              previewLabel: t("preview"),
+              previewLocked: busy.music === true,
+              preview: () => lock("music", () => previewMusic(current.musicPreset)),
+              onChange: (next) => {
+                store.set({ musicPreset: next });
+                if (next !== "off") lock("music", () => previewMusic(next));
+              },
+            }),
+          ),
+          row(
+            t("currentVolume"),
+            h(VolumeControl, {
+              label: t("currentVolume"),
+              value: current.musicVolumeCurrent,
+              onChange: (value) => store.set({ musicVolumeCurrent: value }),
+            }),
+          ),
+          row(
+            t("otherVolume"),
+            h(VolumeControl, {
+              label: t("otherVolume"),
+              value: current.musicVolumeOther,
+              onChange: (value) => store.set({ musicVolumeOther: value }),
+            }),
+            t("otherVolumeHint"),
+          ),
+        ]),
+        group("groupNotifications", [
+          row(
+            t("notifyVolume"),
+            h(VolumeControl, {
+              label: t("notifyVolume"),
+              value: current.notifyVolume,
+              // The notification volume is the one slider whose effect cannot be
+              // heard live: it only shows up at the next chime. Give it its own
+              // audition so a drag is confirmed immediately.
+              previewLabel: t("preview"),
+              previewLocked: busy.notifyVolume === true,
+              preview: () => lock("notifyVolume", () => previewNotificationVolume()),
+              onChange: (value) => store.set({ notifyVolume: value }),
+            }),
+          ),
+          row(
+            t("success"),
+            h(SelectControl, {
+              label: t("success"),
+              value: current.successSound,
+              choices: soundChoices,
+              previewLabel: t("preview"),
+              previewLocked: busy.success === true,
+              preview: () => lock("success", () => previewChime("success")),
+              onChange: (next) => {
+                store.set({ successSound: next });
+                if (next !== "off") lock("success", () => previewChime("success"));
+              },
+            }),
+          ),
+          row(
+            t("attention"),
+            h(SelectControl, {
+              label: t("attention"),
+              value: current.attentionSound,
+              choices: soundChoices,
+              previewLabel: t("preview"),
+              previewLocked: busy.attention === true,
+              preview: () => lock("attention", () => previewChime("attention")),
+              onChange: (next) => {
+                store.set({ attentionSound: next });
+                if (next !== "off") lock("attention", () => previewChime("attention"));
+              },
+            }),
+          ),
+        ]),
         audioAvailable ? null : h("div", { className: "dcs-note", role: "note" }, t("noAudio")),
     );
     const mainCard = h("div", { className: "dcs-card" }, head, expanded ? list : null);
-    return h("div", { className: "dcs-stack" }, mainCard, phaseCard);
+    // The chevron says it collapses the sound settings; both cards belong to
+    // that section, so one state controls both instead of leaving the phase card
+    // expanded below a collapsed control.
+    return h("div", { className: "dcs-stack" }, mainCard, expanded ? phaseCard : null);
   };
 }
 
@@ -715,7 +785,8 @@ function apply(ctx) {
   const subscribeLocale = (listener) => ctx.locale.subscribe(listener);
 
   // Settings → engine. A preset change rebuilds the chain and reconciles voices;
-  // a volume change only re-points the per-session gains.
+  // a volume change only re-points the per-session gains. Both are live: the
+  // engine reads the store's current value, so a slider drag is heard at once.
   let lastPreset = store.get().musicPreset;
   ctx.effect(
     () =>
@@ -726,7 +797,7 @@ function apply(ctx) {
           lastPreset = next.musicPreset;
           voices.resync();
         }
-        voices.setCurrent();
+        voices.reapplyVolumes();
       }),
     "coding-sound: settings to engine",
   );
@@ -751,25 +822,37 @@ function apply(ctx) {
     previewMusic: (preset) => {
       if (preset === "off") return;
       void bus.resume();
-      music.preview(preset);
+      // 试听 follows the current-session volume, so the slider is audible here
+      // too instead of the preview always playing at its own fixed level.
+      music.preview(preset, store.get().musicVolumeCurrent / 100);
     },
     previewChime: (kind) => {
       void bus.resume();
       void player.play(kind, store.get());
     },
+    previewNotificationVolume: () => {
+      void bus.resume();
+      const settingsValue = store.get();
+      // A volume audition should still sound when both chimes are switched off;
+      // fall back to the synth phrase in that case so the slider always gives
+      // feedback. Otherwise it plays the completion chime the user selected.
+      const sample = settingsValue.successSound === "off" ? { ...settingsValue, successSound: "synth" } : settingsValue;
+      void player.play("success", sample);
+    },
     previewPhase: (phase) => {
       const settingsValue = store.get();
       void bus.resume();
+      const volume = settingsValue.musicVolumeCurrent / 100;
       // The audition is paced by the same interval the live stream uses, so it
       // predicts what the setting will actually sound like during a turn.
       if (phase === "thinking") {
         if (!settingsValue.thinkingSound) return;
-        music.previewPhrase({ pitch: settingsValue.thinkingPitch, density: settingsValue.thinkingDensity, count: 4 });
+        music.previewPhrase({ pitch: settingsValue.thinkingPitch, density: settingsValue.thinkingDensity, count: 4, volume });
         return;
       }
       if (phase === "answer") {
         if (!settingsValue.answerSound) return;
-        music.previewPhrase({ pitch: settingsValue.answerPitch, density: settingsValue.answerDensity, count: 4 });
+        music.previewPhrase({ pitch: settingsValue.answerPitch, density: settingsValue.answerDensity, count: 4, volume });
         return;
       }
       const interval = TOOL_PULSE_INTERVALS[settingsValue.toolSound];
@@ -784,6 +867,7 @@ function apply(ctx) {
         intervalMs: interval,
         intervals,
         pitch: settingsValue.toolPitch,
+        volume,
       });
     },
   });

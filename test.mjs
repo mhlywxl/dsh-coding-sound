@@ -213,11 +213,13 @@ test("preset table matches the reference parameter for parameter", () => {
 
 test("defaults and normalization are hardened", () => {
   assert.deepEqual(settings.normalizeSettings(undefined), settings.DEFAULTS);
-  assert.equal(settings.DEFAULTS.musicPreset, "digital");
+  // The first-run preset is the gentle sine one: the default is what a user
+  // hears for hours, and a square wave's harmonics are the fatiguing material.
+  assert.equal(settings.DEFAULTS.musicPreset, "ethereal");
   assert.equal(settings.DEFAULTS.notifyVolume, 100);
   assert.equal(settings.DEFAULTS.musicVolumeCurrent, 100);
   assert.equal(settings.DEFAULTS.musicVolumeOther, 80);
-  assert.equal(settings.normalizeSettings({ musicPreset: "nope" }).musicPreset, "digital");
+  assert.equal(settings.normalizeSettings({ musicPreset: "nope" }).musicPreset, "ethereal");
   assert.equal(settings.normalizeSettings({ successSound: "nope" }).successSound, "synth");
   assert.equal(settings.normalizeSettings({ notifyVolume: "130" }).notifyVolume, 100);
   assert.equal(settings.normalizeSettings({ notifyVolume: -5 }).notifyVolume, 0);
@@ -291,6 +293,11 @@ test("the three-state badge counts audible layers", () => {
   assert.equal(summarizeSoundStatus("off", "synth", "synth", 70), "custom");
   assert.equal(summarizeSoundStatus("ethereal", "synth", "off", 70), "custom");
   assert.equal(summarizeSoundStatus("off", "synth", "synth", 0), "allOff");
+  // A music preset with every phase muted makes no sound, so the badge must not
+  // still count the music layer.
+  assert.equal(summarizeSoundStatus("ethereal", "off", "off", 70, false), "allOff");
+  assert.equal(summarizeSoundStatus("ethereal", "synth", "off", 70, false), "enabled");
+  assert.equal(summarizeSoundStatus("ethereal", "synth", "synth", 70, false), "custom");
 });
 
 test("notification volume maps to gain and the named options keep their levels", () => {
@@ -365,7 +372,12 @@ test("synthesized chimes keep the reference phrases and distinct variants", () =
   ]);
   assert.equal(chimes.chimeDuration("success"), 0.44);
   assert.equal(chimes.chimeDuration("attention"), 0.31);
-  assert.equal(chimes.SHIMMER_LEVEL, 0.12);
+  // Playback is tuned for comfort without rewriting the reference tables.
+  assert.equal(chimes.CHIME_TRANSPOSE, 0.5);
+  assert.equal(chimes.CHIME_ATTACK_SECONDS, 0.008);
+  assert.equal(chimes.CHIME_OUTPUT_TRIM, 0.8);
+  assert.equal(chimes.SHIMMER_RATIO, 2);
+  assert.equal(chimes.SHIMMER_LEVEL, 0.06);
 
   // Four named options, each a different phrase shape: rising, confirm,
   // ascending arpeggio, descending.
@@ -383,6 +395,44 @@ test("synthesized chimes keep the reference phrases and distinct variants", () =
 
   assert.equal(chimes.preferredSound({ ...settings.DEFAULTS, successSound: "back" }, "success"), "back");
   assert.equal(chimes.preferredSound({ ...settings.DEFAULTS, attentionSound: "start" }, "attention"), "start");
+});
+
+test("chime playback is transposed and softened without touching the reference phrases", () => {
+  const frequencies = [];
+  const peaks = [];
+  const oscillator = () => ({
+    type: "",
+    frequency: { setValueAtTime: (value) => frequencies.push(value) },
+    connect() {},
+    start() {},
+    stop() {},
+  });
+  const gainNode = () => ({
+    gain: {
+      setValueAtTime() {},
+      linearRampToValueAtTime: (value) => peaks.push(value),
+      exponentialRampToValueAtTime() {},
+    },
+    connect() {},
+  });
+  class Context {
+    constructor() {
+      this.currentTime = 0;
+      this.destination = {};
+    }
+    createOscillator() { return oscillator(); }
+    createGain() { return gainNode(); }
+    resume() { return Promise.resolve(); }
+    close() { return Promise.resolve(); }
+  }
+  const bus = { context: () => new Context(), resume: () => Promise.resolve(true) };
+  const player = new chimes.ChimePlayer({ bus });
+  assert.equal(player.play("success", { ...settings.DEFAULTS, successSound: "synth", notifyVolume: 100 }), true);
+  // One carrier and one octave shimmer per note, all an octave below the table.
+  assert.equal(frequencies.length, 6);
+  assert.deepEqual(frequencies.slice(0, 2), [659.25, 1318.5]);
+  assert.ok(Math.max(...frequencies) <= 2093, "nothing sits above the 2–5 kHz fatigue peak");
+  assert.ok(Math.abs(Math.max(...peaks) - 0.35 * chimes.CHIME_OUTPUT_TRIM) < 1e-9, "the trim keeps the alert from startling");
 });
 
 // ---------------------------------------------------------------------------
@@ -829,6 +879,131 @@ test("a suspended audio context never queues notes into one burst", () => {
   assert.ok(starts[0] >= 5.01, `a note needs scheduling headroom, got ${starts[0]}`);
 });
 
+test("a note is routed through its session gain, so volume changes are audible", () => {
+  const param = (value = 0) => ({
+    value,
+    setValueAtTime(next) { this.value = next; return this; },
+    linearRampToValueAtTime(next) { this.value = next; return this; },
+    exponentialRampToValueAtTime(next) { this.value = next; return this; },
+    cancelScheduledValues() { return this; },
+  });
+  const created = { gains: [], filters: [], oscillators: [] };
+  const node = (kind) => ({
+    kind,
+    gain: param(1),
+    frequency: param(kind === "oscillator" ? 440 : 1000),
+    Q: param(1),
+    type: "",
+    buffer: null,
+    targets: [],
+    connect(target) { this.targets.push(target); return this; },
+    disconnect() { this.targets = []; },
+    start() {},
+    stop() {},
+  });
+  class Context {
+    constructor() {
+      this.state = "running";
+      this.currentTime = 10;
+      this.sampleRate = 48000;
+      this.destination = node("destination");
+    }
+    createGain() { const next = node("gain"); created.gains.push(next); return next; }
+    createOscillator() { const next = node("oscillator"); created.oscillators.push(next); return next; }
+    createBiquadFilter() { const next = node("filter"); created.filters.push(next); return next; }
+    createConvolver() { return node("convolver"); }
+    createBuffer(channels, length) {
+      const data = Array.from({ length: channels }, () => new Float32Array(length));
+      return { getChannelData: (channel) => data[channel] };
+    }
+    resume() { return Promise.resolve(); }
+    close() { return Promise.resolve(); }
+  }
+  let wall = 0;
+  const engine = new musicModule.MusicEngine({ bus: new musicModule.AudioBus(Context), random: () => 0.5, clock: () => wall });
+  engine.setPreset("ethereal");
+  const config = presets.presetConfig("ethereal");
+  assert.equal(engine.startVoice("a", 0.4), true);
+  // Creation order: master, wet, then the session voice. Every note has to land
+  // on the session voice, not on the shared filter: the old path skipped the
+  // gain entirely, so both volume sliders and the pause/stop fades were dead.
+  const [master, wet, voice] = created.gains;
+  assert.equal(master.gain.value, config.masterVolume);
+  assert.equal(wet.gain.value, config.reverbWet);
+  assert.equal(voice.gain.value, 0.4);
+  const [presetFilter, comfort] = created.filters;
+  assert.equal(presetFilter.type, "lowpass");
+  assert.equal(presetFilter.frequency.value, config.filterFreq);
+  assert.equal(presetFilter.Q.value, musicModule.PRESET_FILTER_Q, "no resonant peak at the preset cutoff");
+  assert.equal(comfort.type, "lowpass");
+  assert.equal(comfort.frequency.value, musicModule.COMFORT_LOWPASS_HZ);
+  assert.equal(comfort.Q.value, musicModule.COMFORT_LOWPASS_Q);
+  assert.ok(wet.targets.includes(comfort), "the reverb tail is comfort-filtered too");
+  assert.ok(comfort.targets.includes(master));
+
+  wall = 1000;
+  assert.equal(engine.note("a", 4, { charactersPerBeat: 1 }), true);
+  const envelope = created.gains.at(-1);
+  assert.equal(envelope.targets[0], voice, "the note envelope lands on the session gain");
+
+  engine.setVolume("a", 0.15);
+  assert.equal(voice.gain.value, 0.15, "the volume setting reaches a live voice at once");
+  wall = 2000;
+  assert.equal(engine.note("a", 4, { charactersPerBeat: 1, phase: "answer" }), true);
+  assert.equal(created.gains.at(-1).targets[0], voice);
+
+  engine.pauseVoice("a");
+  assert.equal(voice.gain.value, 0, "a waiting session is actually silenced");
+  assert.equal(engine.pulse("a"), false, "and schedules no pulse");
+  engine.resumeVoice("a");
+  assert.equal(voice.gain.value, 0.15);
+
+  // 试听 follows the current-session volume as well, instead of ignoring it.
+  created.gains.length = 0;
+  engine.previewPhrase({ volume: 0.5 });
+  assert.equal(created.gains[0].gain.value, config.masterVolume * musicModule.PREVIEW_GAIN * 0.5);
+  engine.dispose();
+});
+
+test("a session starting inside the stop fade is not reaped by the stale timer", async () => {
+  const param = () => ({
+    value: 0,
+    setValueAtTime(value) { this.value = value; return this; },
+    linearRampToValueAtTime(value) { this.value = value; return this; },
+    exponentialRampToValueAtTime(value) { this.value = value; return this; },
+    cancelScheduledValues() { return this; },
+  });
+  const node = () => ({
+    gain: param(), frequency: param(), Q: param(), buffer: null,
+    connect() { return this; }, disconnect() {}, start() {}, stop() {},
+  });
+  class Context {
+    constructor() { this.state = "running"; this.currentTime = 0; this.sampleRate = 48000; this.destination = node(); }
+    createGain() { return node(); }
+    createOscillator() { return node(); }
+    createBiquadFilter() { return node(); }
+    createConvolver() { return node(); }
+    createBuffer(channels, length) {
+      const data = Array.from({ length: channels }, () => new Float32Array(length));
+      return { getChannelData: (channel) => data[channel] };
+    }
+    resume() { return Promise.resolve(); }
+    close() { return Promise.resolve(); }
+  }
+  const engine = new musicModule.MusicEngine({ bus: new musicModule.AudioBus(Context) });
+  engine.setPreset("ethereal");
+  engine.startVoice("a", 1);
+  engine.stopVoice("a");
+  assert.equal(engine.isRunning(), false);
+  // A follow-up turn can arrive well inside the 420 ms reap window.
+  engine.startVoice("a", 1);
+  assert.equal(engine.isRunning(), true);
+  await new Promise((resolve) => setTimeout(resolve, presets.VOICE_REAP_MS + 60));
+  assert.equal(engine.isRunning(), true, "the revived voice survives the stale reap timer");
+  assert.equal(engine.pulse("a"), true, "and can still schedule notes");
+  engine.dispose();
+});
+
 test("the density setting paces the live stream, not just the 试听 phrase", () => {
   // Real streaming delivers several characters per DOM flush, so the character
   // gate alone once left the tempo to the flush cadence: the setting only
@@ -1006,17 +1181,22 @@ class FakeParam {
 }
 
 class FakeNode {
-  constructor() {
+  constructor(kind = "node") {
+    this.kind = kind;
     this.gain = new FakeParam(0);
     this.frequency = new FakeParam(440);
     this.Q = new FakeParam(1);
     this.buffer = null;
     this.onended = null;
+    this.targets = [];
   }
-  connect() {
+  connect(target) {
+    this.targets.push(target);
     return this;
   }
-  disconnect() {}
+  disconnect() {
+    this.targets = [];
+  }
   start() {}
   stop() {}
 }
@@ -1024,23 +1204,29 @@ class FakeNode {
 class FakeAudioContext {
   static instances = [];
   constructor() {
+    this.created = [];
     this.state = "running";
     this.currentTime = 0;
     this.sampleRate = 48000;
-    this.destination = new FakeNode();
+    this.destination = new FakeNode("destination");
     FakeAudioContext.instances.push(this);
   }
+  #make(kind) {
+    const node = new FakeNode(kind);
+    this.created.push(node);
+    return node;
+  }
   createGain() {
-    return new FakeNode();
+    return this.#make("gain");
   }
   createOscillator() {
-    return new FakeNode();
+    return this.#make("oscillator");
   }
   createBiquadFilter() {
-    return new FakeNode();
+    return this.#make("filter");
   }
   createConvolver() {
-    return new FakeNode();
+    return this.#make("convolver");
   }
   createBuffer(channels, length) {
     const data = Array.from({ length: channels }, () => new Float32Array(length));
@@ -1202,11 +1388,18 @@ test("the built client module applies cleanly against a fake runtime", () => {
     assert.equal(navLabel.props["data-coding-sound-nav"], "");
     const first = SoundSection({});
     assert.equal(first.props.className, "dcs-stack");
+    // The main card is grouped by category: the music layer (with its own two
+    // session volumes) is separate from the notification layer.
+    assert.equal(collect(first, (node) => node.props?.className === "dcs-group").length, 2);
+    assert.deepEqual(
+      collect(first, (node) => node.props?.className === "dcs-group-title").map((node) => node.children[0]),
+      ["groupMusic", "groupNotifications"],
+    );
     assert.equal(collect(first, (node) => node.props?.className === "dcs-row").length, 6);
     assert.equal(collect(first, (node) => node.props?.className === "dcs-phase-row").length, 3);
     assert.equal(collect(first, (node) => node.type === "select").length, 9);
     assert.equal(collect(first, (node) => node.props?.role === "switch").length, 3);
-    assert.equal(collect(first, (node) => node.props?.className === "dcs-preview").length, 6);
+    assert.equal(collect(first, (node) => node.props?.className === "dcs-preview").length, 7);
     assert.ok(collect(first, (node) => node.props?.className?.includes("dcs-badge--custom")).length === 1);
     // The tool phase now has the same two controls as the text phases: a rate
     // (six steps plus the switch's off) and a pitch.
@@ -1226,6 +1419,35 @@ test("the built client module applies cleanly against a fake runtime", () => {
     assert.match(toolOptions[0].children[0], /^0\.1 /);
     assert.match(toolOptions[9].children[0], /^2 /);
     assert.equal(toolControls[1].props.value, "normal");
+
+    // The current-session volume slider reaches the live voice. This is exactly
+    // the path that used to be dead twice over: notes skipped the session gain,
+    // and the settings subscription re-pointed a gain nothing flowed through.
+    runtime.setStatus(new Map([["a", { running: true }]]));
+    const audioContext = FakeAudioContext.instances[0];
+    const presetFilter = audioContext.created.find((node) => node.kind === "filter");
+    const voiceGain = audioContext.created.find(
+      (node) => node.kind === "gain" && node.targets.includes(presetFilter),
+    );
+    assert.ok(voiceGain, "the running session has its own gain feeding the preset filter");
+    assert.equal(voiceGain.gain.value, 1);
+    const volumeSlider = collect(
+      first,
+      (node) => node.type === "input" && node.props?.["aria-label"] === "currentVolume",
+    )[0];
+    assert.ok(volumeSlider, "the current-session volume slider exists");
+    volumeSlider.props.onChange({ target: { value: "40" } });
+    assert.equal(voiceGain.gain.value, 0.4, "dragging the slider changes the live voice at once");
+
+    // The notification volume cannot be judged from a live turn, so its row has
+    // its own audition; it stays available even when both chimes are off.
+    const notifyPreview = collect(
+      first,
+      (node) => node.props?.className === "dcs-preview" && node.props?.["aria-label"] === "notifyVolume preview",
+    )[0];
+    assert.ok(notifyPreview, "the notification volume has its own audition");
+    notifyPreview.props.onClick();
+    assert.equal(FakeAudioContext.instances.length, 1);
 
     // Auditioning a phase works even before a session runs.
     const thinkingPreview = collect(
@@ -1251,8 +1473,53 @@ test("the built client module applies cleanly against a fake runtime", () => {
     assert.equal(mainSelects.length, 3);
     for (const select of mainSelects) select.props.onChange({ target: { value: "off" } });
     const second = SoundSection({});
-    assert.equal(collect(second, (node) => node.props?.className === "dcs-preview").length, 3);
+    assert.equal(collect(second, (node) => node.props?.className === "dcs-preview").length, 4);
+    assert.equal(
+      collect(second, (node) => node.props?.["aria-label"] === "notifyVolume preview").length,
+      1,
+      "the notification volume audition survives both chimes being off",
+    );
     assert.ok(collect(second, (node) => node.props?.className?.includes("dcs-badge--allOff")).length === 1);
+    // With no music preset the phase card explains why a live turn is silent;
+    // the audition still works, so the note is a hint rather than a disabled row.
+    assert.equal(
+      collect(second, (node) => node.props?.className === "dcs-note" && node.children?.[0] === "phaseNeedsMusic").length,
+      1,
+    );
+
+    // The three phases are separate settings categories: editing thinking's
+    // density writes only `thinkingDensity`, and the other two rows keep theirs.
+    const densitySelect = (tree, phase) =>
+      collect(tree, (node) => node.type === "select" && node.props?.["aria-label"] === `phase${phase} density`)[0];
+    const thinkingDensity = densitySelect(second, "Thinking");
+    assert.ok(thinkingDensity, "the thinking density row exists");
+    thinkingDensity.props.onChange({ target: { value: "8" } });
+    const persisted = JSON.parse(memory.get(settings.STORAGE_KEY));
+    assert.equal(persisted.thinkingDensity, 8);
+    assert.equal(persisted.answerDensity, undefined, "answer density is untouched");
+    assert.equal(persisted.toolSound, undefined, "the tool rate is untouched");
+    const third = SoundSection({});
+    assert.equal(densitySelect(third, "Thinking").props.value, "8");
+    assert.equal(densitySelect(third, "Answer").props.value, "4");
+    assert.equal(
+      collect(third, (node) => node.type === "select" && node.props?.["aria-label"] === "phaseTool toolPulse")[0]
+        .props.value,
+      "900",
+    );
+
+    // One chevron owns the whole section: collapsing it hides both the grouped
+    // card and the phase card, and expanding brings them back.
+    const toggle = collect(third, (node) => node.props?.className === "dcs-toggle")[0];
+    assert.ok(toggle, "the collapse control exists");
+    toggle.props.onClick();
+    const collapsed = SoundSection({});
+    assert.equal(collect(collapsed, (node) => node.props?.className === "dcs-row").length, 0);
+    assert.equal(collect(collapsed, (node) => node.props?.className === "dcs-phase-row").length, 0);
+    const reopen = collect(collapsed, (node) => node.props?.className === "dcs-toggle")[0];
+    reopen.props.onClick();
+    const reopened = SoundSection({});
+    assert.equal(collect(reopened, (node) => node.props?.className === "dcs-row").length, 6);
+    assert.equal(collect(reopened, (node) => node.props?.className === "dcs-phase-row").length, 3);
 
     runtime.disposeAll();
     assert.equal(FakeAudioContext.instances[0].state, "closed");

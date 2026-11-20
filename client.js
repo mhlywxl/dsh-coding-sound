@@ -233,12 +233,17 @@ window.__ModuleLoader__.load({
          * a sound plugin — with the notification chimes at full volume and the
          * non-current session layer at 80%.
          *
+         * The first-run preset is `ethereal` (sine, slow attack), not `digital`: a
+         * square wave's odd harmonics are the brightest material the engine can make,
+         * and the default is what a user hears for a whole session. They can still
+         * choose `digital` deliberately.
+         *
          * Thinking is denser than the answer (one note per 2 reasoning characters) so a
          * long reasoning stream reads as continuous music rather than a slow pulse; the
          * user can change or disable each phase in the settings card.
          */
         const DEFAULTS = Object.freeze({
-          musicPreset: "digital",
+          musicPreset: "ethereal",
           notifyVolume: 100,
           successSound: "synth",
           attentionSound: "synth",
@@ -368,11 +373,17 @@ window.__ModuleLoader__.load({
         /**
          * The card's three-state badge, copied from the reference `summarizeSoundStatus`:
          * count the audible layers; 0 = all off, 1 = enabled, 2–3 = customized.
+         *
+         * `phasesAudible` is whether any phase of the music layer is on. It defaults to
+         * true for callers that predate the phase card, but the client passes it: a
+         * music preset with every phase muted makes no sound at all, so the badge must
+         * not still claim the section is audible.
          */
-        function summarizeSoundStatus(music, success, attention, notificationVolume) {
+        function summarizeSoundStatus(music, success, attention, notificationVolume, phasesAudible = true) {
           const notificationsAudible = notificationVolume > 0;
+          const musicAudible = music !== "off" && phasesAudible === true;
           const count = [
-            music !== "off",
+            musicAudible,
             notificationsAudible && success !== "off",
             notificationsAudible && attention !== "off",
           ].filter(Boolean).length;
@@ -622,9 +633,17 @@ window.__ModuleLoader__.load({
          * package ships no third-party audio assets and every option still sounds
          * distinct.
          *
-         * Every note is a sine carrier plus a 4× shimmer (12% level, decaying to 60% of
-         * the note's duration). A failed/unsupported `AudioContext` leaves the call
-         * silent instead of throwing into the caller.
+         * Playback is tuned for long listening: the phrase tables below keep the
+         * reference intervals, while the player transposes them one octave down
+         * ({@link CHIME_TRANSPOSE}) so the fundamentals sit at 261–1046 Hz instead of
+         * 523–2093 Hz — below the ear's 2–5 kHz sensitivity peak — and uses a 2×
+         * shimmer at 6% instead of a 4× shimmer at 12%. The attack is 8 ms rather than
+         * 2 ms, which removes the edge a half-cycle ramp gives low notes. A trim keeps
+         * the two alert voices present without being startling.
+         *
+         * Every note is a sine carrier plus its octave shimmer (decaying to 60% of the
+         * note's duration). A failed/unsupported `AudioContext` leaves the call silent
+         * instead of throwing into the caller.
          */
 
         const { notificationVolumeToGain, chimeVariantLevel } = settings;
@@ -670,9 +689,22 @@ window.__ModuleLoader__.load({
           ]),
         });
 
-        /** Relative level and decay ratio of the shimmer partial. */
-        const SHIMMER_LEVEL = 0.12;
+        /**
+         * Comfort tuning applied at playback, not baked into the reference tables.
+         *
+         * Human hearing is most sensitive around 2–5 kHz (the ear-canal resonance), and
+         * sustained energy there is what makes a chime feel piercing after a while.
+         * One octave down moves every fundamental into 261–1046 Hz, where the same
+         * loudness is comfortable rather than sharp; the octave shimmer stays musical
+         * and consonant. The slower attack avoids the transient click, and the trim
+         * keeps the alert audible without jumping out of the background mix.
+         */
+        const CHIME_TRANSPOSE = 0.5;
+        const CHIME_ATTACK_SECONDS = 0.008;
+        const SHIMMER_RATIO = 2;
+        const SHIMMER_LEVEL = 0.06;
         const SHIMMER_DURATION_RATIO = 0.6;
+        const CHIME_OUTPUT_TRIM = 0.8;
 
         /** How long one phrase keeps sounding, in seconds. */
         function scheduleDuration(notes) {
@@ -751,19 +783,26 @@ window.__ModuleLoader__.load({
             const base = ctx.currentTime + 0.01;
             for (const note of notes) {
               const start = base + note.at;
-              scheduleSynthNote(ctx, ctx.destination, note.freq, start, outputVolume * note.level, note.duration);
+              scheduleSynthNote(
+                ctx,
+                ctx.destination,
+                note.freq * CHIME_TRANSPOSE,
+                start,
+                outputVolume * note.level * CHIME_OUTPUT_TRIM,
+                note.duration,
+              );
             }
           }
         }
 
-        /** One synthesized note: a sine carrier plus its 4× shimmer. */
+        /** One synthesized note: a sine carrier plus its octave shimmer. */
         function scheduleSynthNote(ctx, destination, freq, startTime, peak, duration) {
           const osc = ctx.createOscillator();
           osc.type = "sine";
           osc.frequency.setValueAtTime(freq, startTime);
           const gain = ctx.createGain();
           gain.gain.setValueAtTime(0, startTime);
-          gain.gain.linearRampToValueAtTime(peak, startTime + 0.002);
+          gain.gain.linearRampToValueAtTime(peak, startTime + CHIME_ATTACK_SECONDS);
           gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
           osc.connect(gain);
           gain.connect(destination);
@@ -772,10 +811,10 @@ window.__ModuleLoader__.load({
 
           const shimmer = ctx.createOscillator();
           shimmer.type = "sine";
-          shimmer.frequency.setValueAtTime(freq * 4, startTime);
+          shimmer.frequency.setValueAtTime(freq * SHIMMER_RATIO, startTime);
           const shimmerGain = ctx.createGain();
           shimmerGain.gain.setValueAtTime(0, startTime);
-          shimmerGain.gain.linearRampToValueAtTime(peak * SHIMMER_LEVEL, startTime + 0.002);
+          shimmerGain.gain.linearRampToValueAtTime(peak * SHIMMER_LEVEL, startTime + CHIME_ATTACK_SECONDS);
           shimmerGain.gain.exponentialRampToValueAtTime(0.001, startTime + duration * SHIMMER_DURATION_RATIO);
           shimmer.connect(shimmerGain);
           shimmerGain.connect(destination);
@@ -786,6 +825,10 @@ window.__ModuleLoader__.load({
         module.exports = {
           SYNTH_NOTES,
           CHIME_VARIANTS,
+          CHIME_TRANSPOSE,
+          CHIME_ATTACK_SECONDS,
+          CHIME_OUTPUT_TRIM,
+          SHIMMER_RATIO,
           SHIMMER_LEVEL,
           SHIMMER_DURATION_RATIO,
           scheduleDuration,
@@ -806,11 +849,19 @@ window.__ModuleLoader__.load({
          * gain per session.
          *
          * The signal path is the reference implementation's, with the single-session
-         * master split into per-session voices:
+         * master split into per-session voices and a comfort stage added after the
+         * preset's own filter:
          *
-         *   per-session gain ─┬──────────────────────────────┐
-         *                     └─ lowpass ─┬→ master ─→ out    │
-         *                                 └→ convolver → wet ─┘
+         *   per-session gain → preset lowpass ─┬────────────────────→ comfort → master → out
+         *                                     └→ convolver → wet ───→ comfort
+         *
+         * The comfort stage is deliberate: the human ear is most sensitive around
+         * 2–5 kHz (the ear-canal resonance), and energy there is what makes a
+         * continuously playing sound read as harsh after a long session. A gentle
+         * second-order lowpass at {@link COMFORT_LOWPASS_HZ}, with no resonant peak,
+         * keeps the musical body and rolls off the fatigue band. The preset filter's Q
+         * was lowered for the same reason: a resonant lowpass boosts the very octave
+         * the stage is meant to tame.
          *
          * One context per page, never one per session: browsers cap live contexts at a
          * handful. A session's music exists only while that session is running; the
@@ -833,8 +884,35 @@ window.__ModuleLoader__.load({
           presetConfig,
         } = presets;
 
-        /** Preset used before a stored preference is known, and when one is invalid. */
-        const DEFAULT_PRESET = "digital";
+        /**
+         * Preset used before a stored preference is known, and when one is invalid.
+         *
+         * A sine preset with a slow attack, not the square-wave `digital` one: the
+         * first-run sound is the one a user hears for hours, and a square wave's odd
+         * harmonics are the brightest (and most fatiguing) material this engine can
+         * make.
+         */
+        const DEFAULT_PRESET = "ethereal";
+
+        /**
+         * Comfort tone stage, shared by the live and audition chains.
+         *
+         * 2.5 kHz is below the ear's 2–5 kHz sensitivity peak while still keeping the
+         * first three harmonics of the C4–D5 scale (261–587 Hz) intact; Q 0.5 is
+         * non-resonant, so the cutoff itself does not become a new harsh edge.
+         */
+        const COMFORT_LOWPASS_HZ = 2500;
+        const COMFORT_LOWPASS_Q = 0.5;
+
+        /**
+         * The preset filter is a lowpass at the preset's own cutoff (1.5–5 kHz). It
+         * used to run at Q 1, which put a small resonant peak right inside the band
+         * the comfort stage is reducing; half a Q keeps the transition flat.
+         */
+        const PRESET_FILTER_Q = 0.5;
+
+        /** The audition chain plays this much louder than the live layer, so a preview is audible while still tracking the volume slider. */
+        const PREVIEW_GAIN = 2;
 
         /**
          * Spacing of one density step, shared by the live beat and the phase audition.
@@ -1058,7 +1136,9 @@ window.__ModuleLoader__.load({
             this.#ramp(voice.gain.gain, 0, VOICE_STOP_SECONDS);
             this.#after(VOICE_REAP_MS, () => {
               const current = this.voices.get(sessionId);
-              if (current !== voice) return;
+              // A new turn can start inside the reap window: `startVoice` revives this
+              // same voice (stopping=false), and the stale timer must not delete it.
+              if (current !== voice || !voice.stopping) return;
               this.voices.delete(sessionId);
               this.carry.delete(sessionId);
               this.carryPhase.delete(sessionId);
@@ -1132,7 +1212,7 @@ window.__ModuleLoader__.load({
             const now = this.clock();
             if (now - (this.lastBeat.get(sessionId) ?? -Infinity) < densityIntervalMs(perBeat)) return false;
             this.lastBeat.set(sessionId, now);
-            return this.#playNote(options.velocity ?? 1, options.pitch ?? "normal");
+            return this.#playNote(voice, options.velocity ?? 1, options.pitch ?? "normal");
           }
 
           /**
@@ -1149,14 +1229,18 @@ window.__ModuleLoader__.load({
             const now = this.clock();
             if (now - (this.lastBeat.get(sessionId) ?? -Infinity) < MIN_BEAT_INTERVAL_MS) return false;
             this.lastBeat.set(sessionId, now);
-            return this.#playNote(options.velocity ?? 1, options.pitch ?? "normal");
+            return this.#playNote(voice, options.velocity ?? 1, options.pitch ?? "normal");
           }
 
           /**
            * Play the reference audition: four ascending notes on the preset's own
            * response chain, twice as loud as the background layer.
+           *
+           * @param {string} preset
+           * @param {number} [volume] current-session fraction (0–1), so the audition
+           *   follows the volume slider instead of ignoring it.
            */
-          preview(preset) {
+          preview(preset, volume) {
             const config = presetConfig(preset);
             if (config === undefined) return false;
             let context;
@@ -1167,7 +1251,7 @@ window.__ModuleLoader__.load({
             }
             void this.bus.resume();
             try {
-              const chain = this.#buildAuditionChain(context, config);
+              const chain = this.#buildAuditionChain(context, config, volume);
               const notes = [SCALE_FREQS[0], SCALE_FREQS[2], SCALE_FREQS[4], SCALE_FREQS[6]];
               const base = context.currentTime + 0.01;
               notes.forEach((freq, index) => this.#auditionNote(context, chain.filter, config, freq, base + index * 0.05, 1));
@@ -1184,9 +1268,10 @@ window.__ModuleLoader__.load({
            * running session and while the music preset is `off` (the default preset is
            * used then), so a phase can be heard before it ever plays live.
            *
-           * @param {{count?: number, intervalMs?: number, density?: number, velocity?: number, pitch?: "low"|"normal"|"high"}} [options]
+           * @param {{count?: number, intervalMs?: number, density?: number, velocity?: number, pitch?: "low"|"normal"|"high", volume?: number}} [options]
            *   `density` paces the phrase exactly like the live beat of that phase;
-           *   `intervalMs` overrides it for callers that pace by time (the tool pulse).
+           *   `intervalMs` overrides it for callers that pace by time (the tool pulse);
+           *   `volume` is the current-session fraction the audition should follow.
            */
           previewPhrase(options = {}) {
             const config = presetConfig(this.preset) ?? presetConfig(DEFAULT_PRESET);
@@ -1206,7 +1291,7 @@ window.__ModuleLoader__.load({
             const velocity = Number.isFinite(options.velocity) ? Math.min(1, Math.max(0, options.velocity)) : 1;
             const shift = options.pitch === "low" ? 0.5 : options.pitch === "high" ? 2 : 1;
             try {
-              const chain = this.#buildAuditionChain(context, config);
+              const chain = this.#buildAuditionChain(context, config, options.volume);
               const scale = [SCALE_FREQS[0], SCALE_FREQS[2], SCALE_FREQS[4], SCALE_FREQS[6], SCALE_FREQS[1], SCALE_FREQS[3], SCALE_FREQS[5]];
               const base = context.currentTime + 0.01;
               let offsetMs = 0;
@@ -1241,29 +1326,43 @@ window.__ModuleLoader__.load({
             }
           }
 
-          #buildChain() {
-            const context = this.bus.context();
-            const config = presetConfig(this.preset) ?? presetConfig(DEFAULT_PRESET);
-
+          /**
+           * One tone chain: preset filter → comfort stage → master, with the reverb
+           * send filtered by the same comfort stage so the wet tail cannot reintroduce
+           * the high band the dry path just removed.
+           */
+          #buildToneChain(context, config, masterVolume) {
             const master = context.createGain();
-            master.gain.value = config.masterVolume;
+            master.gain.value = masterVolume;
             master.connect(context.destination);
 
             const filter = context.createBiquadFilter();
             filter.type = "lowpass";
             filter.frequency.value = config.filterFreq;
-            filter.Q.value = 1;
-            filter.connect(master);
+            filter.Q.value = PRESET_FILTER_Q;
+
+            const comfort = context.createBiquadFilter();
+            comfort.type = "lowpass";
+            comfort.frequency.value = COMFORT_LOWPASS_HZ;
+            comfort.Q.value = COMFORT_LOWPASS_Q;
+            comfort.connect(master);
 
             const reverb = context.createConvolver();
             reverb.buffer = this.#impulse(config.reverbDecay);
             const wet = context.createGain();
             wet.gain.value = config.reverbWet;
+            filter.connect(comfort);
             filter.connect(reverb);
             reverb.connect(wet);
-            wet.connect(master);
+            wet.connect(comfort);
+            return { master, filter, comfort, reverb, wet };
+          }
 
-            this.chain = { master, filter, reverb, wet, config };
+          #buildChain() {
+            const context = this.bus.context();
+            const config = presetConfig(this.preset) ?? presetConfig(DEFAULT_PRESET);
+            const tone = this.#buildToneChain(context, config, config.masterVolume);
+            this.chain = { ...tone, config };
           }
 
           #rebuildChain() {
@@ -1286,7 +1385,7 @@ window.__ModuleLoader__.load({
               }
             }
             if (previous !== null) {
-              for (const node of [previous.filter, previous.reverb, previous.wet, previous.master]) {
+              for (const node of [previous.filter, previous.comfort, previous.reverb, previous.wet, previous.master]) {
                 try {
                   node.disconnect();
                 } catch {
@@ -1300,7 +1399,7 @@ window.__ModuleLoader__.load({
             const chain = this.chain;
             this.chain = null;
             if (chain === null) return;
-            for (const node of [chain.filter, chain.reverb, chain.wet, chain.master]) {
+            for (const node of [chain.filter, chain.comfort, chain.reverb, chain.wet, chain.master]) {
               try {
                 node.disconnect();
               } catch {
@@ -1309,30 +1408,18 @@ window.__ModuleLoader__.load({
             }
           }
 
-          /** A detached audition chain: same timbre as the live one, twice as loud. */
-          #buildAuditionChain(context, config) {
-            const master = context.createGain();
-            master.gain.value = config.masterVolume * 2;
-            master.connect(context.destination);
-
-            const filter = context.createBiquadFilter();
-            filter.type = "lowpass";
-            filter.frequency.value = config.filterFreq;
-            filter.Q.value = 1;
-            filter.connect(master);
-
-            const reverb = context.createConvolver();
-            reverb.buffer = this.#impulse(config.reverbDecay);
-            const wet = context.createGain();
-            wet.gain.value = config.reverbWet;
-            filter.connect(reverb);
-            reverb.connect(wet);
-            wet.connect(master);
-            return { master, filter, reverb, wet };
+          /**
+           * A detached audition chain: same timbre and comfort stage as the live one,
+           * {@link PREVIEW_GAIN} times louder than the background layer, scaled by the
+           * current session volume so the slider is audible in 试听 too.
+           */
+          #buildAuditionChain(context, config, volume) {
+            const level = Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 1;
+            return this.#buildToneChain(context, config, config.masterVolume * PREVIEW_GAIN * level);
           }
 
           #disposeAuditionChain(chain) {
-            for (const node of [chain.filter, chain.reverb, chain.wet, chain.master]) {
+            for (const node of [chain.filter, chain.comfort, chain.reverb, chain.wet, chain.master]) {
               try {
                 node.disconnect();
               } catch {
@@ -1362,10 +1449,18 @@ window.__ModuleLoader__.load({
             osc.stop(start + config.attack + config.decay + config.release + 0.05);
           }
 
-          /** Schedule one note on the shared chain; `velocity` scales the envelope. */
-          #playNote(velocity = 1, pitch = "normal") {
+          /**
+           * Schedule one note on the shared chain; `velocity` scales the envelope.
+           *
+           * The envelope lands on the session's own gain — not on the shared filter.
+           * That gain is the per-session volume (the current/other sliders, the
+           * start/pause/stop fades), so a note that skipped it ignored every volume
+           * setting and every fade: the music kept playing at full level while the
+           * session waited, and moving a slider changed nothing.
+           */
+          #playNote(voice, velocity = 1, pitch = "normal") {
             const chain = this.chain;
-            if (chain === null) return false;
+            if (chain === null || voice === undefined || voice.stopping) return false;
             let context;
             try {
               context = this.bus.context();
@@ -1406,7 +1501,7 @@ window.__ModuleLoader__.load({
               gain.linearRampToValueAtTime(0.001, start + config.attack + config.decay + 0.01 + config.release);
 
               osc.connect(envelope);
-              envelope.connect(chain.filter);
+              envelope.connect(voice.gain);
               osc.start(start);
               osc.stop(start + config.attack + config.decay + config.release + 0.01);
               return true;
@@ -1457,6 +1552,10 @@ window.__ModuleLoader__.load({
 
         module.exports = {
           DEFAULT_PRESET,
+          COMFORT_LOWPASS_HZ,
+          COMFORT_LOWPASS_Q,
+          PRESET_FILTER_Q,
+          PREVIEW_GAIN,
           BEAT_INTERVAL_BASE_MS,
           BEAT_INTERVAL_STEP_MS,
           MIN_DENSITY,
@@ -2027,11 +2126,24 @@ window.__ModuleLoader__.load({
             return edges;
           }
 
-          /** Re-point the current-session volume after the user switches tabs. */
-          setCurrent() {
+          /**
+           * Re-point every running voice at its session volume.
+           *
+           * Called after a settings change (the two volume sliders) and when the
+           * current tab switches. It deliberately does not touch the idle window: a
+           * slider drag is not conversation activity, and resetting the window on every
+           * `input` event would postpone the working pulse for as long as the user
+           * keeps dragging.
+           */
+          reapplyVolumes() {
             for (const [id, state] of this.states) {
               if (state.running) this.engine.setVolume(id, this.#volumeFor(id));
             }
+          }
+
+          /** Re-point the current-session volume after the user switches tabs. */
+          setCurrent() {
+            this.reapplyVolumes();
             // Switching conversations is not "the current answer went quiet": start its
             // idle window from now.
             this.lastCurrentActivity = this.clock();
@@ -2301,6 +2413,9 @@ window.__ModuleLoader__.load({
         .dcs-toggle:hover{background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.14));color:var(--dsw-alias-label-primary,inherit)}
         .dcs-toggle:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,currentColor);outline-offset:1px}
         .dcs-list{display:flex;flex-direction:column;gap:10px;margin-top:12px;padding-top:12px;border-top:0.5px solid var(--dsw-alias-border-l1,rgba(127,127,127,.18))}
+        .dcs-group{display:flex;flex-direction:column;gap:10px}
+        .dcs-group+.dcs-group{margin-top:6px;padding-top:10px;border-top:0.5px dashed var(--dsw-alias-border-l1,rgba(127,127,127,.14))}
+        .dcs-group-title{font-size:11px;font-weight:600;letter-spacing:.02em;color:var(--dsw-alias-label-secondary,inherit);opacity:.9}
         .dcs-row{display:flex;align-items:center;gap:12px;min-height:26px}
         .dcs-label{flex:1;min-width:0;font-size:12px;line-height:1.4;color:var(--dsw-alias-label-secondary,inherit)}
         .dcs-control{display:inline-flex;flex:none;align-items:center;gap:6px}
@@ -2346,7 +2461,7 @@ window.__ModuleLoader__.load({
         const zh = Object.freeze({
           nav: "声音与提醒",
           title: "声音与提醒",
-          hint: "背景音乐与完成/等待提示音",
+          hint: "背景音乐、阶段声音与完成/等待提示音",
           "status.allOff": "全部关闭",
           "status.enabled": "已启用",
           "status.custom": "已自定义",
@@ -2368,12 +2483,15 @@ window.__ModuleLoader__.load({
           "sound.start": "界面启动",
           "sound.back": "界面返回",
           preview: "试听",
-          currentVolume: "当前会话音量",
-          otherVolume: "其他会话音量",
-          otherVolumeHint: "其他会话仍在后台工作时使用的音量",
+          currentVolume: "当前会话音乐音量",
+          otherVolume: "其他会话音乐音量",
+          otherVolumeHint: "其他会话仍在后台工作时使用的音乐音量",
           noAudio: "这个浏览器不支持 Web Audio，声音无法播放。",
+          groupMusic: "背景音乐",
+          groupNotifications: "通知提示音",
           phaseTitle: "阶段声音",
-          phaseHint: "思考 / 回答 / 工具执行，可分别关闭、调频率与音高",
+          phaseHint: "背景音乐层的三个阶段：思考 / 回答 / 工具执行，可分别关闭、调频率与音高",
+          phaseNeedsMusic: "阶段声音属于背景音乐层：先启用一个音乐预设，运行中才会发声（试听仍可用）。",
           phaseThinking: "思考",
           phaseAnswer: "回答正文",
           phaseTool: "工具执行",
@@ -2392,7 +2510,7 @@ window.__ModuleLoader__.load({
         const en = Object.freeze({
           nav: "Sound & alerts",
           title: "Sound & alerts",
-          hint: "Background music plus completion and attention chimes",
+          hint: "Background music, phase sounds and completion/attention chimes",
           "status.allOff": "All off",
           "status.enabled": "Enabled",
           "status.custom": "Customized",
@@ -2414,12 +2532,15 @@ window.__ModuleLoader__.load({
           "sound.start": "UI start",
           "sound.back": "UI back",
           preview: "Preview",
-          currentVolume: "Current session volume",
-          otherVolume: "Other sessions volume",
-          otherVolumeHint: "Volume used by sessions still working in the background",
+          currentVolume: "Current session music volume",
+          otherVolume: "Other sessions music volume",
+          otherVolumeHint: "Music volume used by sessions still working in the background",
           noAudio: "This browser has no Web Audio; sound cannot play.",
+          groupMusic: "Background music",
+          groupNotifications: "Notifications",
           phaseTitle: "Phase sounds",
-          phaseHint: "Thinking / answer / tool execution — each can be muted, retimed or transposed",
+          phaseHint: "Three modes of the music layer: thinking / answer / tool execution — each can be muted, retimed or transposed",
+          phaseNeedsMusic: "Phase sounds belong to the music layer: enable a preset to hear them live (preview still works).",
           phaseThinking: "Thinking",
           phaseAnswer: "Answer",
           phaseTool: "Tool execution",
@@ -2521,7 +2642,7 @@ window.__ModuleLoader__.load({
                     type: "button",
                     className: "dcs-preview",
                     title: previewLabel,
-                    "aria-label": previewLabel,
+                    "aria-label": `${label} ${previewLabel}`,
                     disabled: previewLocked === true,
                     onClick: preview,
                   },
@@ -2530,9 +2651,9 @@ window.__ModuleLoader__.load({
           );
         }
 
-        /** One range plus its `{value}%` readout. */
+        /** One range plus its `{value}%` readout and an optional audition. */
         function VolumeControl(options) {
-          const { label, value, onChange } = options;
+          const { label, value, onChange, preview, previewLabel, previewLocked } = options;
           return h(
             "span",
             { className: "dcs-control" },
@@ -2547,6 +2668,20 @@ window.__ModuleLoader__.load({
               onChange: (event) => onChange(Number(event.target.value)),
             }),
             h("output", { className: "dcs-value" }, `${value}%`),
+            typeof preview === "function"
+              ? h(
+                  "button",
+                  {
+                    type: "button",
+                    className: "dcs-preview",
+                    title: previewLabel,
+                    "aria-label": `${label} ${previewLabel}`,
+                    disabled: previewLocked === true,
+                    onClick: preview,
+                  },
+                  playIcon(),
+                )
+              : null,
           );
         }
 
@@ -2625,7 +2760,7 @@ window.__ModuleLoader__.load({
          * subscribes to the store with `useSyncExternalStore`.
          */
         function createSoundSection(deps) {
-          const { store, t, subscribeLocale, previewMusic, previewChime, previewPhase, audioAvailable } = deps;
+          const { store, t, subscribeLocale, previewMusic, previewChime, previewNotificationVolume, previewPhase, audioAvailable } = deps;
 
           return function SoundSection() {
             const snapshot = useStoreSnapshot(store);
@@ -2657,7 +2792,14 @@ window.__ModuleLoader__.load({
 
             const current = snapshot.settings;
             const expanded = snapshot.expanded;
-            const status = summarizeSoundStatus(current.musicPreset, current.successSound, current.attentionSound, current.notifyVolume);
+            const phasesAudible = current.thinkingSound || current.answerSound || current.toolSound !== "off";
+            const status = summarizeSoundStatus(
+              current.musicPreset,
+              current.successSound,
+              current.attentionSound,
+              current.notifyVolume,
+              phasesAudible,
+            );
             const densityChoices = DENSITY_VALUES.map((value) => ({ value: String(value), label: `${value} ${t("charsPerBeat")}` }));
             const pitchChoices = [
               { value: "low", label: t("pitchLow") },
@@ -2682,9 +2824,15 @@ window.__ModuleLoader__.load({
                 playIcon(),
               );
 
+            // The tool row folds its on/off switch into the rate value (`off`), unlike
+            // the two text rows, which have a separate switch key. Remember the last
+            // live rate so toggling the switch back on does not silently reset the pace
+            // the user chose.
+            const lastToolRate = useRef(current.toolSound === "off" ? "900" : current.toolSound);
+            const toolRate = current.toolSound === "off" ? lastToolRate.current : current.toolSound;
             // The per-phase card: thinking and answer are token-driven and each has its
             // own density/pitch; tool execution has no text, so its rate is the pulse
-            // interval (six steps plus off) and it has the same pitch choice.
+            // interval (ten steps plus off) and it has the same pitch choice.
             const phaseCard = h(
               "div",
               { className: "dcs-card" },
@@ -2731,7 +2879,7 @@ window.__ModuleLoader__.load({
                   }),
                   phasePreview("answer", current.answerSound, t("phaseAnswer")),
                 ]),
-                phaseRow(t("phaseTool"), current.toolSound !== "off", (on) => store.set({ toolSound: on ? "900" : "off" }), [
+                phaseRow(t("phaseTool"), current.toolSound !== "off", (on) => store.set({ toolSound: on ? lastToolRate.current : "off" }), [
                   h(ChipToggle, {
                     label: t("toolRandom"),
                     title: t("toolRandomHint"),
@@ -2741,10 +2889,13 @@ window.__ModuleLoader__.load({
                   }),
                   h(SelectBox, {
                     label: `${t("phaseTool")} ${t("toolPulse")}`,
-                    value: current.toolSound === "off" ? "900" : current.toolSound,
+                    value: toolRate,
                     choices: toolSpeedChoices,
                     disabled: current.toolSound === "off",
-                    onChange: (value) => store.set({ toolSound: value }),
+                    onChange: (value) => {
+                      lastToolRate.current = value;
+                      store.set({ toolSound: value });
+                    },
                   }),
                   h(SelectBox, {
                     label: `${t("phaseTool")} ${t("pitch")}`,
@@ -2755,6 +2906,11 @@ window.__ModuleLoader__.load({
                   }),
                   phasePreview("tool", current.toolSound !== "off", t("phaseTool"), toolAuditionLockMs(current.toolSound, current.toolRandom)),
                 ]),
+                // Phase sounds are the music layer's three modes, not the notification
+                // chimes. With no preset there is no voice to play them through, so say
+                // that instead of leaving the user wondering why a preview sounds but a
+                // live turn does not.
+                current.musicPreset === "off" ? h("div", { className: "dcs-note" }, t("phaseNeedsMusic")) : null,
               ),
             );
 
@@ -2779,83 +2935,109 @@ window.__ModuleLoader__.load({
               ),
             );
 
+            // Two explicit categories, in the order they are used: the music layer with
+            // its own two session volumes, then the notification layer with its volume
+            // and its two chimes. The phase card below is the third category. Keeping
+            // the volume next to the layer it controls is what stops "current session
+            // volume" from looking like a property of the notification chimes.
+            const group = (titleKey, children) =>
+              h(
+                "div",
+                { className: "dcs-group" },
+                h("div", { className: "dcs-group-title" }, t(titleKey)),
+                ...children,
+              );
+
             const list = h(
               "div",
               { className: "dcs-list", id: PANEL_ID },
-                row(
-                  t("music"),
-                  h(SelectControl, {
-                    label: t("music"),
-                    value: current.musicPreset,
-                    choices: musicChoices,
-                    previewLabel: t("preview"),
-                    previewLocked: busy.music === true,
-                    preview: () => lock("music", () => previewMusic(current.musicPreset)),
-                    onChange: (next) => {
-                      store.set({ musicPreset: next });
-                      if (next !== "off") lock("music", () => previewMusic(next));
-                    },
-                  }),
-                ),
-                row(
-                  t("notifyVolume"),
-                  h(VolumeControl, {
-                    label: t("notifyVolume"),
-                    value: current.notifyVolume,
-                    onChange: (value) => store.set({ notifyVolume: value }),
-                  }),
-                ),
-                row(
-                  t("success"),
-                  h(SelectControl, {
-                    label: t("success"),
-                    value: current.successSound,
-                    choices: soundChoices,
-                    previewLabel: t("preview"),
-                    previewLocked: busy.success === true,
-                    preview: () => lock("success", () => previewChime("success")),
-                    onChange: (next) => {
-                      store.set({ successSound: next });
-                      if (next !== "off") lock("success", () => previewChime("success"));
-                    },
-                  }),
-                ),
-                row(
-                  t("attention"),
-                  h(SelectControl, {
-                    label: t("attention"),
-                    value: current.attentionSound,
-                    choices: soundChoices,
-                    previewLabel: t("preview"),
-                    previewLocked: busy.attention === true,
-                    preview: () => lock("attention", () => previewChime("attention")),
-                    onChange: (next) => {
-                      store.set({ attentionSound: next });
-                      if (next !== "off") lock("attention", () => previewChime("attention"));
-                    },
-                  }),
-                ),
-                row(
-                  t("currentVolume"),
-                  h(VolumeControl, {
-                    label: t("currentVolume"),
-                    value: current.musicVolumeCurrent,
-                    onChange: (value) => store.set({ musicVolumeCurrent: value }),
-                  }),
-                ),
-                row(
-                  t("otherVolume"),
-                  h(VolumeControl, {
-                    label: t("otherVolume"),
-                    value: current.musicVolumeOther,
-                    onChange: (value) => store.set({ musicVolumeOther: value }),
-                  }),
-                  t("otherVolumeHint"),
-                ),
+                group("groupMusic", [
+                  row(
+                    t("music"),
+                    h(SelectControl, {
+                      label: t("music"),
+                      value: current.musicPreset,
+                      choices: musicChoices,
+                      previewLabel: t("preview"),
+                      previewLocked: busy.music === true,
+                      preview: () => lock("music", () => previewMusic(current.musicPreset)),
+                      onChange: (next) => {
+                        store.set({ musicPreset: next });
+                        if (next !== "off") lock("music", () => previewMusic(next));
+                      },
+                    }),
+                  ),
+                  row(
+                    t("currentVolume"),
+                    h(VolumeControl, {
+                      label: t("currentVolume"),
+                      value: current.musicVolumeCurrent,
+                      onChange: (value) => store.set({ musicVolumeCurrent: value }),
+                    }),
+                  ),
+                  row(
+                    t("otherVolume"),
+                    h(VolumeControl, {
+                      label: t("otherVolume"),
+                      value: current.musicVolumeOther,
+                      onChange: (value) => store.set({ musicVolumeOther: value }),
+                    }),
+                    t("otherVolumeHint"),
+                  ),
+                ]),
+                group("groupNotifications", [
+                  row(
+                    t("notifyVolume"),
+                    h(VolumeControl, {
+                      label: t("notifyVolume"),
+                      value: current.notifyVolume,
+                      // The notification volume is the one slider whose effect cannot be
+                      // heard live: it only shows up at the next chime. Give it its own
+                      // audition so a drag is confirmed immediately.
+                      previewLabel: t("preview"),
+                      previewLocked: busy.notifyVolume === true,
+                      preview: () => lock("notifyVolume", () => previewNotificationVolume()),
+                      onChange: (value) => store.set({ notifyVolume: value }),
+                    }),
+                  ),
+                  row(
+                    t("success"),
+                    h(SelectControl, {
+                      label: t("success"),
+                      value: current.successSound,
+                      choices: soundChoices,
+                      previewLabel: t("preview"),
+                      previewLocked: busy.success === true,
+                      preview: () => lock("success", () => previewChime("success")),
+                      onChange: (next) => {
+                        store.set({ successSound: next });
+                        if (next !== "off") lock("success", () => previewChime("success"));
+                      },
+                    }),
+                  ),
+                  row(
+                    t("attention"),
+                    h(SelectControl, {
+                      label: t("attention"),
+                      value: current.attentionSound,
+                      choices: soundChoices,
+                      previewLabel: t("preview"),
+                      previewLocked: busy.attention === true,
+                      preview: () => lock("attention", () => previewChime("attention")),
+                      onChange: (next) => {
+                        store.set({ attentionSound: next });
+                        if (next !== "off") lock("attention", () => previewChime("attention"));
+                      },
+                    }),
+                  ),
+                ]),
                 audioAvailable ? null : h("div", { className: "dcs-note", role: "note" }, t("noAudio")),
             );
             const mainCard = h("div", { className: "dcs-card" }, head, expanded ? list : null);
-            return h("div", { className: "dcs-stack" }, mainCard, phaseCard);
+            // The chevron says it collapses the sound settings; both cards belong to
+            // that section, so one state controls both instead of leaving the phase card
+            // expanded below a collapsed control.
+            return h("div", { className: "dcs-stack" }, mainCard, expanded ? phaseCard : null);
           };
         }
 
@@ -2933,7 +3115,8 @@ window.__ModuleLoader__.load({
           const subscribeLocale = (listener) => ctx.locale.subscribe(listener);
 
           // Settings → engine. A preset change rebuilds the chain and reconciles voices;
-          // a volume change only re-points the per-session gains.
+          // a volume change only re-points the per-session gains. Both are live: the
+          // engine reads the store's current value, so a slider drag is heard at once.
           let lastPreset = store.get().musicPreset;
           ctx.effect(
             () =>
@@ -2944,7 +3127,7 @@ window.__ModuleLoader__.load({
                   lastPreset = next.musicPreset;
                   voices.resync();
                 }
-                voices.setCurrent();
+                voices.reapplyVolumes();
               }),
             "coding-sound: settings to engine",
           );
@@ -2969,25 +3152,37 @@ window.__ModuleLoader__.load({
             previewMusic: (preset) => {
               if (preset === "off") return;
               void bus.resume();
-              music.preview(preset);
+              // 试听 follows the current-session volume, so the slider is audible here
+              // too instead of the preview always playing at its own fixed level.
+              music.preview(preset, store.get().musicVolumeCurrent / 100);
             },
             previewChime: (kind) => {
               void bus.resume();
               void player.play(kind, store.get());
             },
+            previewNotificationVolume: () => {
+              void bus.resume();
+              const settingsValue = store.get();
+              // A volume audition should still sound when both chimes are switched off;
+              // fall back to the synth phrase in that case so the slider always gives
+              // feedback. Otherwise it plays the completion chime the user selected.
+              const sample = settingsValue.successSound === "off" ? { ...settingsValue, successSound: "synth" } : settingsValue;
+              void player.play("success", sample);
+            },
             previewPhase: (phase) => {
               const settingsValue = store.get();
               void bus.resume();
+              const volume = settingsValue.musicVolumeCurrent / 100;
               // The audition is paced by the same interval the live stream uses, so it
               // predicts what the setting will actually sound like during a turn.
               if (phase === "thinking") {
                 if (!settingsValue.thinkingSound) return;
-                music.previewPhrase({ pitch: settingsValue.thinkingPitch, density: settingsValue.thinkingDensity, count: 4 });
+                music.previewPhrase({ pitch: settingsValue.thinkingPitch, density: settingsValue.thinkingDensity, count: 4, volume });
                 return;
               }
               if (phase === "answer") {
                 if (!settingsValue.answerSound) return;
-                music.previewPhrase({ pitch: settingsValue.answerPitch, density: settingsValue.answerDensity, count: 4 });
+                music.previewPhrase({ pitch: settingsValue.answerPitch, density: settingsValue.answerDensity, count: 4, volume });
                 return;
               }
               const interval = TOOL_PULSE_INTERVALS[settingsValue.toolSound];
@@ -3002,6 +3197,7 @@ window.__ModuleLoader__.load({
                 intervalMs: interval,
                 intervals,
                 pitch: settingsValue.toolPitch,
+                volume,
               });
             },
           });

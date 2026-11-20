@@ -3,11 +3,19 @@
  * gain per session.
  *
  * The signal path is the reference implementation's, with the single-session
- * master split into per-session voices:
+ * master split into per-session voices and a comfort stage added after the
+ * preset's own filter:
  *
- *   per-session gain ─┬──────────────────────────────┐
- *                     └─ lowpass ─┬→ master ─→ out    │
- *                                 └→ convolver → wet ─┘
+ *   per-session gain → preset lowpass ─┬────────────────────→ comfort → master → out
+ *                                     └→ convolver → wet ───→ comfort
+ *
+ * The comfort stage is deliberate: the human ear is most sensitive around
+ * 2–5 kHz (the ear-canal resonance), and energy there is what makes a
+ * continuously playing sound read as harsh after a long session. A gentle
+ * second-order lowpass at {@link COMFORT_LOWPASS_HZ}, with no resonant peak,
+ * keeps the musical body and rolls off the fatigue band. The preset filter's Q
+ * was lowered for the same reason: a resonant lowpass boosts the very octave
+ * the stage is meant to tame.
  *
  * One context per page, never one per session: browsers cap live contexts at a
  * handful. A session's music exists only while that session is running; the
@@ -30,8 +38,35 @@ const {
   presetConfig,
 } = presets;
 
-/** Preset used before a stored preference is known, and when one is invalid. */
-const DEFAULT_PRESET = "digital";
+/**
+ * Preset used before a stored preference is known, and when one is invalid.
+ *
+ * A sine preset with a slow attack, not the square-wave `digital` one: the
+ * first-run sound is the one a user hears for hours, and a square wave's odd
+ * harmonics are the brightest (and most fatiguing) material this engine can
+ * make.
+ */
+const DEFAULT_PRESET = "ethereal";
+
+/**
+ * Comfort tone stage, shared by the live and audition chains.
+ *
+ * 2.5 kHz is below the ear's 2–5 kHz sensitivity peak while still keeping the
+ * first three harmonics of the C4–D5 scale (261–587 Hz) intact; Q 0.5 is
+ * non-resonant, so the cutoff itself does not become a new harsh edge.
+ */
+const COMFORT_LOWPASS_HZ = 2500;
+const COMFORT_LOWPASS_Q = 0.5;
+
+/**
+ * The preset filter is a lowpass at the preset's own cutoff (1.5–5 kHz). It
+ * used to run at Q 1, which put a small resonant peak right inside the band
+ * the comfort stage is reducing; half a Q keeps the transition flat.
+ */
+const PRESET_FILTER_Q = 0.5;
+
+/** The audition chain plays this much louder than the live layer, so a preview is audible while still tracking the volume slider. */
+const PREVIEW_GAIN = 2;
 
 /**
  * Spacing of one density step, shared by the live beat and the phase audition.
@@ -255,7 +290,9 @@ class MusicEngine {
     this.#ramp(voice.gain.gain, 0, VOICE_STOP_SECONDS);
     this.#after(VOICE_REAP_MS, () => {
       const current = this.voices.get(sessionId);
-      if (current !== voice) return;
+      // A new turn can start inside the reap window: `startVoice` revives this
+      // same voice (stopping=false), and the stale timer must not delete it.
+      if (current !== voice || !voice.stopping) return;
       this.voices.delete(sessionId);
       this.carry.delete(sessionId);
       this.carryPhase.delete(sessionId);
@@ -329,7 +366,7 @@ class MusicEngine {
     const now = this.clock();
     if (now - (this.lastBeat.get(sessionId) ?? -Infinity) < densityIntervalMs(perBeat)) return false;
     this.lastBeat.set(sessionId, now);
-    return this.#playNote(options.velocity ?? 1, options.pitch ?? "normal");
+    return this.#playNote(voice, options.velocity ?? 1, options.pitch ?? "normal");
   }
 
   /**
@@ -346,14 +383,18 @@ class MusicEngine {
     const now = this.clock();
     if (now - (this.lastBeat.get(sessionId) ?? -Infinity) < MIN_BEAT_INTERVAL_MS) return false;
     this.lastBeat.set(sessionId, now);
-    return this.#playNote(options.velocity ?? 1, options.pitch ?? "normal");
+    return this.#playNote(voice, options.velocity ?? 1, options.pitch ?? "normal");
   }
 
   /**
    * Play the reference audition: four ascending notes on the preset's own
    * response chain, twice as loud as the background layer.
+   *
+   * @param {string} preset
+   * @param {number} [volume] current-session fraction (0–1), so the audition
+   *   follows the volume slider instead of ignoring it.
    */
-  preview(preset) {
+  preview(preset, volume) {
     const config = presetConfig(preset);
     if (config === undefined) return false;
     let context;
@@ -364,7 +405,7 @@ class MusicEngine {
     }
     void this.bus.resume();
     try {
-      const chain = this.#buildAuditionChain(context, config);
+      const chain = this.#buildAuditionChain(context, config, volume);
       const notes = [SCALE_FREQS[0], SCALE_FREQS[2], SCALE_FREQS[4], SCALE_FREQS[6]];
       const base = context.currentTime + 0.01;
       notes.forEach((freq, index) => this.#auditionNote(context, chain.filter, config, freq, base + index * 0.05, 1));
@@ -381,9 +422,10 @@ class MusicEngine {
    * running session and while the music preset is `off` (the default preset is
    * used then), so a phase can be heard before it ever plays live.
    *
-   * @param {{count?: number, intervalMs?: number, density?: number, velocity?: number, pitch?: "low"|"normal"|"high"}} [options]
+   * @param {{count?: number, intervalMs?: number, density?: number, velocity?: number, pitch?: "low"|"normal"|"high", volume?: number}} [options]
    *   `density` paces the phrase exactly like the live beat of that phase;
-   *   `intervalMs` overrides it for callers that pace by time (the tool pulse).
+   *   `intervalMs` overrides it for callers that pace by time (the tool pulse);
+   *   `volume` is the current-session fraction the audition should follow.
    */
   previewPhrase(options = {}) {
     const config = presetConfig(this.preset) ?? presetConfig(DEFAULT_PRESET);
@@ -403,7 +445,7 @@ class MusicEngine {
     const velocity = Number.isFinite(options.velocity) ? Math.min(1, Math.max(0, options.velocity)) : 1;
     const shift = options.pitch === "low" ? 0.5 : options.pitch === "high" ? 2 : 1;
     try {
-      const chain = this.#buildAuditionChain(context, config);
+      const chain = this.#buildAuditionChain(context, config, options.volume);
       const scale = [SCALE_FREQS[0], SCALE_FREQS[2], SCALE_FREQS[4], SCALE_FREQS[6], SCALE_FREQS[1], SCALE_FREQS[3], SCALE_FREQS[5]];
       const base = context.currentTime + 0.01;
       let offsetMs = 0;
@@ -438,29 +480,43 @@ class MusicEngine {
     }
   }
 
-  #buildChain() {
-    const context = this.bus.context();
-    const config = presetConfig(this.preset) ?? presetConfig(DEFAULT_PRESET);
-
+  /**
+   * One tone chain: preset filter → comfort stage → master, with the reverb
+   * send filtered by the same comfort stage so the wet tail cannot reintroduce
+   * the high band the dry path just removed.
+   */
+  #buildToneChain(context, config, masterVolume) {
     const master = context.createGain();
-    master.gain.value = config.masterVolume;
+    master.gain.value = masterVolume;
     master.connect(context.destination);
 
     const filter = context.createBiquadFilter();
     filter.type = "lowpass";
     filter.frequency.value = config.filterFreq;
-    filter.Q.value = 1;
-    filter.connect(master);
+    filter.Q.value = PRESET_FILTER_Q;
+
+    const comfort = context.createBiquadFilter();
+    comfort.type = "lowpass";
+    comfort.frequency.value = COMFORT_LOWPASS_HZ;
+    comfort.Q.value = COMFORT_LOWPASS_Q;
+    comfort.connect(master);
 
     const reverb = context.createConvolver();
     reverb.buffer = this.#impulse(config.reverbDecay);
     const wet = context.createGain();
     wet.gain.value = config.reverbWet;
+    filter.connect(comfort);
     filter.connect(reverb);
     reverb.connect(wet);
-    wet.connect(master);
+    wet.connect(comfort);
+    return { master, filter, comfort, reverb, wet };
+  }
 
-    this.chain = { master, filter, reverb, wet, config };
+  #buildChain() {
+    const context = this.bus.context();
+    const config = presetConfig(this.preset) ?? presetConfig(DEFAULT_PRESET);
+    const tone = this.#buildToneChain(context, config, config.masterVolume);
+    this.chain = { ...tone, config };
   }
 
   #rebuildChain() {
@@ -483,7 +539,7 @@ class MusicEngine {
       }
     }
     if (previous !== null) {
-      for (const node of [previous.filter, previous.reverb, previous.wet, previous.master]) {
+      for (const node of [previous.filter, previous.comfort, previous.reverb, previous.wet, previous.master]) {
         try {
           node.disconnect();
         } catch {
@@ -497,7 +553,7 @@ class MusicEngine {
     const chain = this.chain;
     this.chain = null;
     if (chain === null) return;
-    for (const node of [chain.filter, chain.reverb, chain.wet, chain.master]) {
+    for (const node of [chain.filter, chain.comfort, chain.reverb, chain.wet, chain.master]) {
       try {
         node.disconnect();
       } catch {
@@ -506,30 +562,18 @@ class MusicEngine {
     }
   }
 
-  /** A detached audition chain: same timbre as the live one, twice as loud. */
-  #buildAuditionChain(context, config) {
-    const master = context.createGain();
-    master.gain.value = config.masterVolume * 2;
-    master.connect(context.destination);
-
-    const filter = context.createBiquadFilter();
-    filter.type = "lowpass";
-    filter.frequency.value = config.filterFreq;
-    filter.Q.value = 1;
-    filter.connect(master);
-
-    const reverb = context.createConvolver();
-    reverb.buffer = this.#impulse(config.reverbDecay);
-    const wet = context.createGain();
-    wet.gain.value = config.reverbWet;
-    filter.connect(reverb);
-    reverb.connect(wet);
-    wet.connect(master);
-    return { master, filter, reverb, wet };
+  /**
+   * A detached audition chain: same timbre and comfort stage as the live one,
+   * {@link PREVIEW_GAIN} times louder than the background layer, scaled by the
+   * current session volume so the slider is audible in 试听 too.
+   */
+  #buildAuditionChain(context, config, volume) {
+    const level = Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 1;
+    return this.#buildToneChain(context, config, config.masterVolume * PREVIEW_GAIN * level);
   }
 
   #disposeAuditionChain(chain) {
-    for (const node of [chain.filter, chain.reverb, chain.wet, chain.master]) {
+    for (const node of [chain.filter, chain.comfort, chain.reverb, chain.wet, chain.master]) {
       try {
         node.disconnect();
       } catch {
@@ -559,10 +603,18 @@ class MusicEngine {
     osc.stop(start + config.attack + config.decay + config.release + 0.05);
   }
 
-  /** Schedule one note on the shared chain; `velocity` scales the envelope. */
-  #playNote(velocity = 1, pitch = "normal") {
+  /**
+   * Schedule one note on the shared chain; `velocity` scales the envelope.
+   *
+   * The envelope lands on the session's own gain — not on the shared filter.
+   * That gain is the per-session volume (the current/other sliders, the
+   * start/pause/stop fades), so a note that skipped it ignored every volume
+   * setting and every fade: the music kept playing at full level while the
+   * session waited, and moving a slider changed nothing.
+   */
+  #playNote(voice, velocity = 1, pitch = "normal") {
     const chain = this.chain;
-    if (chain === null) return false;
+    if (chain === null || voice === undefined || voice.stopping) return false;
     let context;
     try {
       context = this.bus.context();
@@ -603,7 +655,7 @@ class MusicEngine {
       gain.linearRampToValueAtTime(0.001, start + config.attack + config.decay + 0.01 + config.release);
 
       osc.connect(envelope);
-      envelope.connect(chain.filter);
+      envelope.connect(voice.gain);
       osc.start(start);
       osc.stop(start + config.attack + config.decay + config.release + 0.01);
       return true;
@@ -654,6 +706,10 @@ class MusicEngine {
 
 module.exports = {
   DEFAULT_PRESET,
+  COMFORT_LOWPASS_HZ,
+  COMFORT_LOWPASS_Q,
+  PRESET_FILTER_Q,
+  PREVIEW_GAIN,
   BEAT_INTERVAL_BASE_MS,
   BEAT_INTERVAL_STEP_MS,
   MIN_DENSITY,

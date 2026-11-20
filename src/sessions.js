@@ -264,11 +264,24 @@ class SessionVoices {
     return edges;
   }
 
-  /** Re-point the current-session volume after the user switches tabs. */
-  setCurrent() {
+  /**
+   * Re-point every running voice at its session volume.
+   *
+   * Called after a settings change (the two volume sliders) and when the
+   * current tab switches. It deliberately does not touch the idle window: a
+   * slider drag is not conversation activity, and resetting the window on every
+   * `input` event would postpone the working pulse for as long as the user
+   * keeps dragging.
+   */
+  reapplyVolumes() {
     for (const [id, state] of this.states) {
       if (state.running) this.engine.setVolume(id, this.#volumeFor(id));
     }
+  }
+
+  /** Re-point the current-session volume after the user switches tabs. */
+  setCurrent() {
+    this.reapplyVolumes();
     // Switching conversations is not "the current answer went quiet": start its
     // idle window from now.
     this.lastCurrentActivity = this.clock();
