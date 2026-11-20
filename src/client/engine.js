@@ -25,19 +25,6 @@
  * drives a note, so a throttled background page cannot shift the rhythm.
  */
 
-const {
-  SCALE_FREQS,
-  OCTAVE_FREQS,
-  TOKENS_PER_BEAT,
-  MIN_BEAT_INTERVAL_MS,
-  LOW_OCTAVE_CHANCE,
-  DETUNE_SPREAD,
-  VOICE_FADE_SECONDS,
-  VOICE_STOP_SECONDS,
-  VOICE_REAP_MS,
-  presetConfig,
-} = presets;
-
 /**
  * Preset used before a stored preference is known, and when one is invalid.
  *
@@ -704,7 +691,7 @@ class MusicEngine {
   }
 }
 
-module.exports = {
+__test.engine = {
   DEFAULT_PRESET,
   COMFORT_LOWPASS_HZ,
   COMFORT_LOWPASS_Q,

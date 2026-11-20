@@ -272,7 +272,7 @@ class ChatTextObserver {
   }
 }
 
-module.exports = {
+__test.observer = {
   FIRST_GROWTH_MAX,
   MAX_DELTA,
   MOUNT_JUMP,

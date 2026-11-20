@@ -16,9 +16,6 @@
  *    never rings it.
  */
 
-const { shouldPlayAttentionChimeForEvent, TOOL_PULSE_INTERVALS } = settings;
-const { TOKENS_PER_BEAT } = presets;
-
 /** The completion chime waits this long, so a two-step turn never rings twice. */
 const SUCCESS_CHIME_DEBOUNCE_MS = 320;
 
@@ -181,7 +178,7 @@ class SessionVoices {
    * @param {object} options
    * @param {{startVoice: Function, stopVoice: Function, pauseVoice: Function, resumeVoice: Function, setVolume: Function, note: Function}} options.engine
    * @param {{play: (kind: "success"|"attention", settings: object) => Promise<boolean>}} options.chimes
-   * @param {() => ReturnType<typeof import("./settings.js").normalizeSettings>} options.getSettings
+   * @param {() => ReturnType<typeof normalizeSettings>} options.getSettings
    * @param {() => string | undefined} options.getCurrentId
    * @param {(sessionId: string) => boolean} [options.isSubagent]
    * @param {() => number} [options.clock]
@@ -447,7 +444,7 @@ class SessionVoices {
   }
 }
 
-module.exports = {
+__test.sessions = {
   SUCCESS_CHIME_DEBOUNCE_MS,
   OTHER_SESSION_PULSE_MIN_MS,
   OTHER_SESSION_PULSE_SPREAD_MS,

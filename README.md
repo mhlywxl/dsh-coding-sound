@@ -45,7 +45,7 @@ dsh plugin --profile web add /absolute/path/dsh-coding-sound
 dsh --profile web
 ```
 
-- 只有源码 ZIP 时，先解压；发布包已经包含 `lib/client.js`，通常不需要再构建。目录根下必须能直接看到 `package.json`。
+- 只有源码 ZIP 时，先解压；发布包已经包含 `client.js`，通常不需要再构建。目录根下必须能直接看到 `package.json`。
 - 目标机器不需要访问 npm，也不需要访问 GitHub。
 
 ### Desktop：在线安装
@@ -211,6 +211,46 @@ dsh --profile web
 
 插件不包含任何第三方音频素材：6 个通知音效全部由 Web Audio 实时合成。源代码以 MIT 许可发布，见 [LICENSE](LICENSE)。
 
+## 工程结构
+
+包布局遵循 DSH bundle 约定：Host 入口 `index.js` 与客户端产物 `client.js` 都在包根，客户端源码在 `src/client/`，构建脚本在 `scripts/`。
+
+| 路径 | 内容 |
+| --- | --- |
+| `index.js` | Host 入口：导出 `apply()`；功能全部在页面里 |
+| `client.js` | 客户端**构建产物**（顶部 GENERATED 标记，不要手改） |
+| `src/client/` | 客户端源码：13 个按职责命名的模块，共享一个 module-loader 闭包 |
+| `scripts/build-client.mjs` | 组装 `client.js`：`npm run build`、`npm run dev`（watch）、`npm run build:check` |
+| `cordis.patch.yml` | Loader patch（`coding-sound` 行） |
+| `locale/en.json`、`locale/zh.json` | `meta.title` / `meta.description` / `meta.detail` |
+| `docs/DETAIL.md`、`docs/DETAIL.zh.md`、`docs/preview.svg` | 插件详情页（英/中 + 单张特性图） |
+| `icon.svg`、`LICENSE`、`README.md`、`CHANGELOG.md` | 包根图标、许可与文档（`sponsor/` 只在仓库里，README 用 GitHub 绝对 URL 引用，不进 npm 包） |
+
+客户端源码的构建顺序由 `scripts/build-client.mjs` 的 `MODULES` 清单决定；`entry.js` 必须第一、`apply.js` 必须最后，其余按依赖排列：
+
+| 模块 | 内容 |
+| --- | --- |
+| `entry.js` | module-loader 入口、React require、hooks、`h` |
+| `constants.js` | 包/section id、设置作用域、导航顺序、试听锁窗口、面板 id |
+| `styles.js` | 全部 `dcs-*` CSS 与 `ensureStyles` |
+| `locale.js` | `zh` / `en` 设置分区词典 |
+| `icons.js` | 扬声器、播放与折角图标 |
+| `presets.js` | 四套生成式音乐预设表 |
+| `settings.js` | 持久化设置文档、归一化与 `SettingsStore` |
+| `chimes.js` | 合成的完成/等待提示音 |
+| `engine.js` | `AudioBus` + `MusicEngine`（一个 `AudioContext`，每个会话一个声部） |
+| `observer.js` | 对话记录观察器，把已绘制文本转换成字符增量 |
+| `sessions.js` | 会话状态边沿 → 声部、淡入淡出与提示音 |
+| `section.js` | 设置 → 声音与提醒 的 React 分区 |
+| `apply.js` | 插件主体（`apply()`）、导出（`inject`、`apply`、离线 `__test` 缝） |
+
+- npm 包只发布运行所需的文件：`index.js`、`client.js`、`cordis.patch.yml`、`locale/*.json`、`icon.svg`、`README.md`、`LICENSE`、`CHANGELOG.md`、`docs/DETAIL.md`、`docs/DETAIL.zh.md`、`docs/preview.svg`；`src/`、`scripts/` 与 `test.mjs` 只存在于仓库。
+- `npm run build` 重新生成 `client.js`；`npm run dev` 监听 `src/client/`；`npm run build:check` 只报告源码与产物是否一致；`npm test` 先跑 `build:check` 再跑离线测试；`npm run check` 再加上产物语法校验（`node --check client.js`）。
+- 为什么不用打包器：DSH 客户端每个包只加载一个 `<plugin>/client.js`，这些模块共享同一个 module-loader 闭包，按 `MODULES` 顺序拼接即可；发布包因此保持零运行时依赖、无构建依赖。
+- 新增或重命名客户端模块时同步修改 `MODULES`；构建脚本会拒绝清单遗漏、指向不存在的文件、重复项、首尾顺序错误，以及跨模块重名的顶层函数。
+- 本地开发不需要额外的安装步骤，只需 Node ≥ 18：`npm run build` / `npm run dev` / `npm test` / `npm run check`；把本地 checkout 装进 web profile 用 `dsh plugin --profile web add /absolute/path/dsh-coding-sound`；用 `npm pack --dry-run` 查看发布包内容。
+- 客户端改动由 DSH 热替换到已打开的页面（刷新页面即可）；Host 改动需要重启 DSH 才生效。
+
 ---
 
 ## English
@@ -251,7 +291,7 @@ dsh --profile web
 ```
 
 For a source ZIP, extract it first; the package root must contain `package.json`
-(release tarballs already include `lib/client.js`). The target machine needs
+(release tarballs already include `client.js`). The target machine needs
 neither npm nor GitHub access.
 
 **Desktop: online install**
@@ -293,6 +333,64 @@ neither npm nor GitHub access.
   Safari needs one page click before its first sound (autoplay policy).
 
 Defaults: Ethereal preset, notification volume 100%, "Synth" completion and waiting chimes, current session music volume 100%, other sessions 80%, thinking every 2 characters, answer every 4, tool pulse 0.9 s with the random jitter on. All sounds are synthesized in the browser with Web Audio — the package ships no audio files. Settings live in the browser's `localStorage` (`dsh:coding-sound:v1`), so each browser keeps its own. MIT.
+
+### Source layout and build
+
+The package follows the DSH bundle convention: the Host entry (`index.js`) and
+the client artifact (`client.js`) live at the package root, the client sources
+under `src/client/`, and the build script under `scripts/`.
+
+| Path | Responsibility |
+| --- | --- |
+| `index.js` | Host entry: exports `apply()`; the feature lives entirely in the page |
+| `client.js` | Client **generated artifact** (GENERATED banner; do not edit) |
+| `src/client/` | Client sources: 13 responsibility-named modules sharing one module-loader closure |
+| `scripts/build-client.mjs` | Assembles `client.js`: `npm run build`, `npm run dev` (watch), `npm run build:check` |
+| `cordis.patch.yml` | Loader patch for the `coding-sound` row |
+| `locale/en.json`, `locale/zh.json` | `meta.title` / `meta.description` / `meta.detail` |
+| `docs/DETAIL.md`, `docs/DETAIL.zh.md`, `docs/preview.svg` | Plugin detail page (English/Chinese plus one feature image) |
+| `icon.svg`, `LICENSE`, `README.md`, `CHANGELOG.md` | Package-root icon, license and docs (`sponsor/` lives only in the repository; the README links it through absolute GitHub URLs, so it is not in the npm package) |
+
+`scripts/build-client.mjs` owns the load order through its `MODULES` list;
+`entry.js` must be first and `apply.js` last, and the rest follow their
+dependencies:
+
+| Module | Responsibility |
+| --- | --- |
+| `entry.js` | module-loader entry, React require, hooks, `h` |
+| `constants.js` | package/section ids, settings scope, nav order, audition lock windows, panel id |
+| `styles.js` | all `dcs-*` CSS and `ensureStyles` |
+| `locale.js` | the `zh` / `en` settings-section dictionaries |
+| `icons.js` | speaker, play and chevron glyphs |
+| `presets.js` | the four generative-music preset tables |
+| `settings.js` | persisted settings document, normalization, `SettingsStore` |
+| `chimes.js` | the synthesized completion/attention chimes |
+| `engine.js` | `AudioBus` + `MusicEngine` (one `AudioContext`, one voice per session) |
+| `observer.js` | chat-transcript observer that turns painted text into character deltas |
+| `sessions.js` | session-status edges → voices, fades and chimes |
+| `section.js` | the Settings → Sound & alerts React section |
+| `apply.js` | plugin body (`apply()`), exports (`inject`, `apply`, offline `__test` seam) |
+
+- The npm package ships only the runtime files: `index.js`, `client.js`,
+  `cordis.patch.yml`, `locale/*.json`, `icon.svg`, `README.md`, `LICENSE`,
+  `CHANGELOG.md`, `docs/DETAIL.md`, `docs/DETAIL.zh.md` and `docs/preview.svg`;
+  `src/`, `scripts/` and `test.mjs` stay in the repository.
+- `npm run build` regenerates `client.js`; `npm run dev` watches `src/client/`;
+  `npm run build:check` reports whether source and artifact agree; `npm test`
+  runs `build:check` first and then the offline tests; `npm run check` adds a
+  `node --check client.js` syntax pass.
+- No bundler: the DSH client loads exactly one `<plugin>/client.js`, the
+  modules share one module-loader closure, and ordered concatenation keeps the
+  published package dependency-free.
+- Adding or renaming a client module means updating `MODULES`; the build script
+  rejects an unlisted or missing file, a duplicated entry, a wrong load order,
+  or a top-level function name duplicated across modules.
+- Nothing to install beyond Node ≥ 18: `npm run build` / `npm run dev` /
+  `npm test` / `npm run check`. Install a local checkout into the web profile
+  with `dsh plugin --profile web add /absolute/path/dsh-coding-sound`; inspect
+  what would be published with `npm pack --dry-run`.
+- Client changes are hot-swapped into the open page by DSH (refresh the page);
+  Host changes need a DSH restart.
 
 ---
 

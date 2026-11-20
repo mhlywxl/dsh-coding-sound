@@ -1,6 +1,6 @@
 {
   "name": "dsh-coding-sound",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "type": "module",
   "description": "Generative background music and notification chimes for DeepSeek Harness: hear whether the agent is thinking, still working, or waiting for you, without watching the screen.",
   "icon": "./icon.svg",
@@ -35,7 +35,6 @@
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
-    "./src/*": "./src/*",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg",
     "./package.json": "./package.json"
@@ -43,22 +42,26 @@
   "files": [
     "index.js",
     "client.js",
-    "src/*.js",
-    "build.mjs",
-    "test.mjs",
     "cordis.patch.yml",
+    "locale/*.json",
     "icon.svg",
+    "CHANGELOG.md",
     "README.md",
-    "locale/*.json"
+    "LICENSE",
+    "docs/DETAIL.md",
+    "docs/DETAIL.zh.md",
+    "docs/preview.svg"
   ],
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "build": "node build.mjs",
-    "dev": "node build.mjs --watch",
-    "check": "node build.mjs --check && node test.mjs",
-    "test": "node test.mjs"
+    "build": "node scripts/build-client.mjs",
+    "dev": "node scripts/build-client.mjs --watch",
+    "build:check": "node scripts/build-client.mjs --check",
+    "test": "node scripts/build-client.mjs --check && node test.mjs",
+    "check": "node scripts/build-client.mjs --check && node --check client.js && node test.mjs",
+    "pack:check": "npm pack --dry-run"
   },
   "dsh": {
     "bundle": {

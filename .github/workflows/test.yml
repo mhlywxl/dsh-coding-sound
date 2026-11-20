@@ -12,7 +12,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: client bundle syntax
+        run: node --check client.js
+      - name: client.js is current
+        run: node scripts/build-client.mjs --check
       - name: Offline test bench
         run: node test.mjs
-      - name: client.js is current
-        run: node build.mjs --check
+      - name: npm package contents
+        run: npm pack --dry-run

@@ -1,64 +1,58 @@
 /**
  * Offline test bench for the coding-sound plugin.
  *
- * No browser and no dependencies: the sources under `src/` are evaluated in
- * Node through the same module graph `build.mjs` generates, and the DOM the
- * observer needs is a small fake. Run with `node test.mjs` (or `npm test`).
+ * No browser and no dependencies: the generated `client.js` is evaluated in
+ * Node through a fake `window.__ModuleLoader__`, the pure modules are read from
+ * the plugin's `__test` seam, and the DOM the observer needs is a small fake.
+ * Run with `node test.mjs` (or `npm test`).
  */
 
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { test } from "node:test";
 
-import { LOAD_LINE, assemble, target } from "./build.mjs";
+import { MODULES, assemble, target } from "./scripts/build-client.mjs";
 
 const here = (path) => new URL(path, import.meta.url);
 
-const DEFS = [
-  ["presets", [], "src/presets.js"],
-  ["settings", ["presets"], "src/settings.js"],
-  ["chimes", ["settings"], "src/chimes.js"],
-  ["engine", ["presets"], "src/engine.js"],
-  ["observer", [], "src/observer.js"],
-  ["sessions", ["presets", "settings"], "src/sessions.js"],
-  [
-    "client",
-    ["presets", "settings", "chimes", "engine", "observer", "sessions"],
-    "src/client.js",
-  ],
-];
+/** React stand-in: enough for the module-loader factory to evaluate in Node. */
+const ReactStub = {
+  createElement: (type, props, ...children) => ({ type, props, children }),
+  useState: (initial) => [typeof initial === "function" ? initial() : initial, () => {}],
+  useEffect: () => {},
+  useReducer: (_reducer, initial) => [initial, () => {}],
+  useCallback: (callback) => callback,
+  useRef: (initial) => ({ current: initial }),
+  useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
+};
 
-/** Evaluate the `src/` module graph exactly like the generated bundle does. */
-function loadGraph() {
-  const cache = new Map();
-  const load = (id) => {
-    if (cache.has(id)) return cache.get(id);
-    const definition = DEFS.find((entry) => entry[0] === id);
-    assert.ok(definition, `unknown module ${id}`);
-    const code = readFileSync(here(definition[2]), "utf8");
-    const factory = new Function("module", "exports", "require", ...definition[1], code);
-    const module = { exports: {} };
-    const dependencies = definition[1].map(load);
-    factory(
-      module,
-      module.exports,
-      () => {
-        throw new Error(`no platform module in the offline bench (${id})`);
-      },
-      ...dependencies,
-    );
-    cache.set(id, module.exports);
-    return module.exports;
-  };
-  return { load };
+/**
+ * Evaluate the generated bundle exactly like the DSH client loader does: the
+ * artifact registers one lazy factory, and the factory returns the plugin.
+ */
+function loadBundle() {
+  const saved = globalThis.window;
+  let spec;
+  globalThis.window = { __ModuleLoader__: { load: (candidate) => { spec = candidate; } } };
+  try {
+    new Function(readFileSync(target, "utf8"))();
+  } finally {
+    if (saved === undefined) delete globalThis.window;
+    else globalThis.window = saved;
+  }
+  assert.ok(spec, "client.js must register a module-loader factory");
+  assert.equal(spec.id, "dsh-coding-sound");
+  return spec.factory(() => ReactStub);
 }
 
-const graph = loadGraph();
-const presets = graph.load("presets");
-const settings = graph.load("settings");
-const chimes = graph.load("chimes");
-const observer = graph.load("observer");
-const sessions = graph.load("sessions");
+const plugin = loadBundle();
+assert.deepEqual(plugin.inject, ["slots", "uiSession", "locale"]);
+const parts = plugin.__test;
+const presets = parts.presets;
+const settings = parts.settings;
+const chimes = parts.chimes;
+const observer = parts.observer;
+const sessions = parts.sessions;
 
 /** A tiny DOM element: enough for the observer's walker and root lookup. */
 class FakeElement {
@@ -112,20 +106,68 @@ test("client.js is the current build output", () => {
   assert.ok(existsSync(target), "client.js must exist");
   const artifact = readFileSync(target, "utf8");
   assert.equal(artifact, assemble());
-  assert.ok(artifact.includes(LOAD_LINE));
-  assert.ok(artifact.includes('id: "dsh-coding-sound"'));
-  assert.ok(artifact.includes("window.__ModuleLoader__.load"));
+  assert.ok(artifact.startsWith("/**\n * GENERATED FILE"), "client.js must start with the GENERATED banner");
+  assert.ok(
+    artifact.includes('window.__ModuleLoader__.load({\n  id: "dsh-coding-sound"'),
+    "client.js must register the package id",
+  );
+  // Every authoring module must reach the bundle under its own region marker,
+  // and no module may be folded in twice.
+  assert.equal((artifact.match(/\/\/#region src\/client\//g) ?? []).length, MODULES.length);
+  for (const name of MODULES) assert.ok(artifact.includes(`//#region src/client/${name}`), `missing region: ${name}`);
+  assert.ok(artifact.includes("return {"), "apply.js must close the factory with the plugin object");
+});
+
+test("the retired bundle layout is gone", () => {
+  // The old build mixed a root build.mjs with src/*.js and shipped the sources;
+  // the DSH bundle convention keeps only the root entries and src/client/.
+  for (const retired of ["build.mjs", "src/client.js", "lib/client.js", "lib/index.js"]) {
+    assert.equal(existsSync(here(retired)), false, `${retired} must not come back`);
+  }
+  assert.equal(existsSync(here("lib")), false, "the lib/ build directory must stay gone");
+});
+
+test("the build manifest covers every source module", () => {
+  const present = readdirSync(here("src/client")).filter((name) => name.endsWith(".js")).sort();
+  assert.deepEqual(present, [...MODULES].sort(), "src/client and the MODULES manifest must agree");
+  assert.ok(present.includes("entry.js"), "entry.js must be the first module");
+  assert.equal(MODULES[0], "entry.js", "entry.js must open the factory");
+  assert.equal(MODULES.at(-1), "apply.js", "apply.js must close the factory");
 });
 
 test("package manifest and cordis patch agree on the package name", () => {
   const manifest = JSON.parse(readFileSync(here("package.json"), "utf8"));
   assert.equal(manifest.name, "dsh-coding-sound");
+  assert.match(manifest.version, /^\d+\.\d+\.\d+$/, "version must be semver");
+  assert.equal(manifest.private, undefined, "private:true blocks npm publish");
   assert.equal(manifest.dsh.bundle.patch, "./cordis.patch.yml");
   assert.equal(manifest.dsh.client.platform, "web");
   assert.equal(manifest.dsh.client.immediately, true);
-  assert.ok(manifest.exports["./client"], "the browser half must be exported");
-  for (const file of ["index.js", "client.js", "cordis.patch.yml", "icon.svg"]) {
+  assert.equal(manifest.exports["."], "./index.js");
+  assert.equal(manifest.exports["./client"], "./client.js", "the browser half must be exported");
+  assert.equal(manifest.exports["./locale/*.json"], "./locale/*.json");
+  assert.equal(manifest.exports["./icon"], "./icon.svg");
+  assert.equal(manifest.exports["./src/*"], undefined, "authoring sources are not a public export");
+  const runtimeFiles = [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "docs/DETAIL.md",
+    "docs/DETAIL.zh.md",
+    "docs/preview.svg",
+  ];
+  for (const file of runtimeFiles) {
     assert.ok(manifest.files.includes(file), `${file} must stay in files`);
+  }
+  // Development-only files must not ship: the generated artifact and modules
+  // are what the DSH loader reads.
+  for (const file of ["build.mjs", "test.mjs", "scripts/", "src/"]) {
+    assert.equal(manifest.files.some((entry) => entry.startsWith(file)), false, `${file} must not ship`);
   }
   const patch = readFileSync(here("cordis.patch.yml"), "utf8");
   assert.ok(patch.includes("id: coding-sound"));
@@ -134,8 +176,15 @@ test("package manifest and cordis patch agree on the package name", () => {
     const dictionary = JSON.parse(readFileSync(here(`locale/${localeFile}.json`), "utf8"));
     assert.ok(dictionary.meta.title.length > 0);
     assert.ok(dictionary.meta.description.length > 0);
+    assert.match(dictionary.meta.detail, /^docs\/DETAIL(\.[a-z]+)?\.md$/, "meta.detail must point at a package-relative document");
+    assert.ok(existsSync(here(dictionary.meta.detail)), `missing detail document: ${dictionary.meta.detail}`);
   }
+  assert.ok(existsSync(here("docs/DETAIL.md")), "the English detail page must exist");
+  assert.ok(existsSync(here("docs/DETAIL.zh.md")), "the Chinese detail page must exist");
+  assert.ok(existsSync(here("docs/preview.svg")), "the detail page must ship one feature image");
+  assert.ok(statSync(here("docs/preview.svg")).size < 256 * 1024, "the preview image must stay small");
   assert.ok(statSync(here("icon.svg")).size < 256 * 1024);
+  assert.ok(statSync(here("client.js")).size < 400 * 1024, "the client artifact must stay reasonably small");
 });
 
 test("the package ships no third-party audio assets", () => {
@@ -807,7 +856,7 @@ test("the tool phase can be silenced, retimed and transposed", () => {
 // Density → live tempo
 // ---------------------------------------------------------------------------
 
-const musicModule = graph.load("engine");
+const musicModule = parts.engine;
 
 test("a density maps to one note spacing, shared by the stream and the audition", () => {
   assert.equal(musicModule.densityIntervalMs(1), 100, "the floor keeps a 1-character beat from stacking");
@@ -1241,16 +1290,6 @@ class FakeAudioContext {
     return Promise.resolve();
   }
 }
-
-const ReactStub = {
-  createElement: (type, props, ...children) => ({ type, props, children }),
-  useState: (initial) => [typeof initial === "function" ? initial() : initial, () => {}],
-  useEffect: () => {},
-  useReducer: (_reducer, initial) => [initial, () => {}],
-  useCallback: (callback) => callback,
-  useRef: (initial) => ({ current: initial }),
-  useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
-};
 
 /** A Cordis client context with just the services this plugin uses. */
 function fakeClientContext() {

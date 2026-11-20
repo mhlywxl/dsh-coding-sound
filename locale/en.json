@@ -1,6 +1,7 @@
 {
   "meta": {
     "title": "Sound & alerts",
-    "description": "Generative background music and notification chimes for DeepSeek Harness: hear whether the agent is thinking, still working, or waiting for you, without watching the screen."
+    "description": "Generative background music and notification chimes for DeepSeek Harness: hear whether the agent is thinking, still working, or waiting for you, without watching the screen.",
+    "detail": "docs/DETAIL.md"
   }
 }

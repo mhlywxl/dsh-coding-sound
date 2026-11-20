@@ -12,8 +12,6 @@
  * Host value and finally to {@link DEFAULTS}.
  */
 
-const { PRESET_IDS } = presets;
-
 /** One document key, versioned so a later format change can migrate. */
 const STORAGE_KEY = "dsh:coding-sound:v1";
 /** Whether the card is expanded; the reference keeps it in memory, we persist it. */
@@ -431,7 +429,7 @@ class SettingsStore {
   }
 }
 
-module.exports = {
+__test.settings = {
   STORAGE_KEY,
   EXPANDED_KEY,
   SETTINGS_KEYS,

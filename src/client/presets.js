@@ -94,7 +94,7 @@ function presetConfig(preset) {
   return isMusicPreset(preset) ? MUSIC_PRESETS[preset] : undefined;
 }
 
-module.exports = {
+__test.presets = {
   PRESET_IDS,
   MUSIC_PRESETS,
   SCALE_FREQS,

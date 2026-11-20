@@ -21,8 +21,6 @@
  * instead of throwing into the caller.
  */
 
-const { notificationVolumeToGain, chimeVariantLevel } = settings;
-
 /**
  * The `synth` option, note for note: a kind-specific phrase.
  * `at` is seconds from the start, `level` is relative to the output volume.
@@ -125,7 +123,7 @@ class ChimePlayer {
   /**
    * Play one chime kind, honoring `off`, `synth`, and the four variants.
    * @param {"success" | "attention"} kind
-   * @param {ReturnType<typeof import("./settings.js").normalizeSettings>} settingsValue
+   * @param {ReturnType<typeof normalizeSettings>} settingsValue
    * @returns {boolean} whether sound was scheduled
    */
   play(kind, settingsValue) {
@@ -197,7 +195,7 @@ function scheduleSynthNote(ctx, destination, freq, startTime, peak, duration) {
   shimmer.stop(startTime + duration);
 }
 
-module.exports = {
+__test.chimes = {
   SYNTH_NOTES,
   CHIME_VARIANTS,
   CHIME_TRANSPOSE,

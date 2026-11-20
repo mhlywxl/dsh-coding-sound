@@ -39,8 +39,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: client.js matches src/
-        run: node build.mjs --check
+      - name: client bundle syntax
+        run: node --check client.js
+      - name: client.js matches src/client/
+        run: node scripts/build-client.mjs --check
       - name: offline tests
         run: node test.mjs
       - name: npm package contents
@@ -296,8 +298,8 @@ jobs:
 
           ## Checks
 
-          - \`node build.mjs --check\` and \`node test.mjs\` (35 offline tests) run before every publish.
-          - \`package.json\` declares \`dsh.bundle.patch\` and \`dsh.client\`; \`cordis.patch.yml\` sits at the repository root.
+          - \`node scripts/build-client.mjs --check\` and \`node test.mjs\` (43 offline tests) run before every publish.
+          - The package follows the DSH bundle convention: the Host entry \`index.js\` and the generated client artifact \`client.js\` sit at the package root, authoring sources live under \`src/client/\`, and \`package.json\` declares \`dsh.bundle.patch\` and \`dsh.client\`.
           - Tested on Windows 11 with DeepSeek Harness desktop 0.2.1-rc.2; the audio code uses only platform-neutral Web Audio and DOM APIs.
           BODY
 
