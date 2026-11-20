@@ -1,16 +1,16 @@
 name: release
 
-# Manual run only for now: verify -> publish to npm -> GitHub Release -> plugin-market PR.
+# verify -> publish to npm -> GitHub Release -> plugin-market PR.
+#
+# Triggered by every push to main; `workflow_dispatch` stays available for
+# re-runs after fixing secrets or the market PR.
 #
 # npm auth: the publish job prefers Trusted Publishing (OIDC) whenever the
 # package has a trusted publisher bound to this repository; set NPM_TOKEN only
 # as a fallback until then (see PUBLISH.md section 5).
 #
-# The push trigger is intentionally off until the repository secrets
-# (NPM_TOKEN, MARKET_TOKEN) are configured; run it from Actions -> release ->
-# Run workflow or `gh workflow run release.yml`.
-#
-# Every step is idempotent, so re-running is always safe:
+# Every step is idempotent, so a push that does not bump the version simply
+# verifies and exits, and re-running is always safe:
 #   * a version already on the registry is not published again,
 #   * an existing release is left alone,
 #   * an entry already listed in the market is not submitted twice,
@@ -19,6 +19,8 @@ name: release
 #     24 hours submits it.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
 
 concurrency:
   group: release-${{ github.ref }}
