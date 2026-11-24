@@ -402,6 +402,8 @@ dependencies:
 
 - **[DSH 分屏工作区](https://github.com/mhlywxl/dsh-split-workspace)**（`dsh-split-workspace`）— 把 DSH 会话区拆成任意数量的原生窗格：左右、上下、田字 2×2 与自动网格，每个窗格都是独立会话。
   <br />*[DSH split workspace](https://github.com/mhlywxl/dsh-split-workspace)* (`dsh-split-workspace`) — Split the DSH conversation area into unlimited native panes — side by side, stacked, 2×2 and an automatic grid — each a real session with its own composer and streaming.
+- **[DSH 自动思考档位](https://github.com/mhlywxl/dsh-think-effort)**（`dsh-think-effort`）— 为 DeepSeek 等推理模型补上思考档位：模型选择器里的 Auto 落到声明默认档，会话标题与压缩等廉价调用自动用低档。
+  <br />*[DSH think effort](https://github.com/mhlywxl/dsh-think-effort)* (`dsh-think-effort`) — Declarative thinking depths for DeepSeek in DSH: Auto resolves to the declared default, and cheap host-owned calls drop to Low.
 
 ## 支持作者 · Support the author
 
